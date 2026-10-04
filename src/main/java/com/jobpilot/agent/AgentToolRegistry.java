@@ -17,8 +17,8 @@ import java.util.Optional;
 @Component
 public class AgentToolRegistry {
 
-    private final Map<String, AgentTool> toolsByName;
-    private final List<ToolDefinition> definitions;
+    private final Map<String, AgentTool> toolsByName;   // 给 Runner 看
+    private final List<ToolDefinition> definitions;   // 给大模型看
 
     public AgentToolRegistry(List<AgentTool> tools) {
         Map<String, AgentTool> byName = new HashMap<>();

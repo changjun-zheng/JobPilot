@@ -2,7 +2,6 @@ package com.jobpilot.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.jobpilot.domain.AgentTraceEntity;
-import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Update;
 
 /**

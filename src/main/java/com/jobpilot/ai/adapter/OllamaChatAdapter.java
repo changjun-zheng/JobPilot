@@ -18,6 +18,7 @@ import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.ollama.api.OllamaChatOptions;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Component;
+import org.springframework.ai.tool.definition.DefaultToolDefinition;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -165,7 +166,7 @@ public class OllamaChatAdapter implements ChatPort {
 
         @Override
         public org.springframework.ai.tool.definition.ToolDefinition getToolDefinition() {
-            return new org.springframework.ai.tool.definition.DefaultToolDefinition(
+            return new DefaultToolDefinition(
                     source.name(), source.description(), source.inputSchema());
         }
 

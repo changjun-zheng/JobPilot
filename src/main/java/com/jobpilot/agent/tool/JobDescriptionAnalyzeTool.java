@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jobpilot.agent.AgentTool;
 import com.jobpilot.ai.ApprovalMode;
-import com.jobpilot.ai.Citation;
 import com.jobpilot.ai.RetrievalQuery;
 import com.jobpilot.ai.RetrievalResult;
 import com.jobpilot.ai.RetrievedChunk;
