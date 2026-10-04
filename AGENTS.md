@@ -75,6 +75,10 @@ RAG 闭环需要同时具备：MySQL（Flyway 建表）、Ollama（`bge-m3` 嵌�
 - `POST /api/v1/applications`、`GET /{id}`、`PATCH /{id}`、`DELETE /{id}`、`GET ?status=&from=&to=&limit=`、`GET /stats?from=&to=` —— 投递记录（**I-3a**）。状态取值见 `ApplicationStatus`（七个枚举，**未知值显式拒绝**，不静默降级）。`applied_at` 是 DATE，时间范围过滤含当天两端。
   - **REST 有 DELETE，agent 没有对应的 `application_delete` 工具**——PRD-FP-2.2 的工具清单里没有它，删除不该由模型发起。它与「撤回投递」（状态置 `WITHDRAWN`）是两件事。
   - PATCH 的三态约定：字段**缺省** = 不修改；**空串** = 清空（仅可空字符串字段）。`appliedAt` 是日期，只能设不能清。
+- `GET /api/v1/memories`（`?type=&status=&limit=`）、`GET /{id}`、`PATCH /{id}`、`DELETE /{id}` —— 长期记忆（**I-3b**）。类型取值见 `MemoryType`（四个枚举，**未知值显式拒绝**）。
+  - **没有 POST**：PRD-FP-4 只给用户查看/编辑/删除，记忆的唯一创建路径是 Agent 生成候选 → 审批。加直建接口等于多一条绕过审批的写入。
+  - `source` / `sourceDraftId` / `confidence` **不可改**——记录「从哪来、当时多确信」，事后修改等于伪造出处。
+  - 正文上限 512 字：**列宽就是「记忆不是知识库」的强制点**，长篇材料走文档导入。
 
 所有响应（含失败）都带 `requestId`：`RequestIdFilter` 生成、写入 MDC 与 `X-Request-Id` 响应头，用户报障时凭它对齐服务端日志。
 
@@ -113,6 +117,14 @@ query 嵌入 → Chroma top-K（where 过滤 `user_id` / 可选 `doc_type`）→
 1. **工具异常绝不外抛**——工具抛异常、模型请求不存在的工具名，都转成 `ToolExecutionResult(FAILED)` 回填给模型，由模型在预算内决定重试或说明；
 2. **租户只来自 `ToolExecutionContext`**——模型参数里的 `userId` 是编造的输入，工具必须忽略（`KnowledgeSearchTool` 有回归测试锁定）；
 3. **HITL 不在环上等**——写入类工具返回 `PENDING_APPROVAL` 即结束本轮 run，用户经独立接口审批。让 HTTP 请求挂起等人点确认会引入连接超时、租户占线程、暂停态存哪三个问题。
+
+**审批语义另有三条规矩**（`ApprovalExecutionService`，改审批链路前先读）：
+
+- **校验全部前置**——载荷校验、候选解析、工具白名单都放在 `claimForApproval` **之前**。草稿一旦被推到终态而副作用没执行，此后每次 approve 都是静默 no-op，用户再也推不动它；「已批准但什么都没发生」是不可恢复的。
+- **幂等路径返回持久化的事实**，不回显本次请求的输入——重复审批带着另一套选择时那些选择被丢弃，把请求内容放进响应就是报告一件没发生的事。
+- **空选择 / 未知候选 ID / 重复候选 ID 一律拒绝**，不静默丢弃：丢一个会让「我勾了三条」写出两行，而响应无法自证；空选择被接受则会得到「批了 0 条」的自相矛盾终态（要全弃请用 reject）。
+
+**批量部分审批**（`memory_candidate_create`）：一份草稿装 N 条候选，`PARTIALLY_APPROVED` 表示只批了子集。用户勾选的**意图**记在草稿的 `approval_selection`，实际写入的**效果**按 `user_memory.source_draft_id` 回查——两者分开存不是冗余，用户删掉记忆后审批记录仍须留存。空选择按 `BAD_REQUEST` 拒绝（否则会得到「批了 0 条」的自相矛盾终态），未知/重复候选 ID 也拒绝而非静默丢弃。
 
 **不用 Spring AI 的 `ToolCallingAdvisor` / `ToolCallingManager`**：它们会把工具执行关进适配器，而租户注入、预算计数、trace、HITL 短路全都在工具执行那一刻。适配器里的 `ToolCallback` 只提供定义，`call()` 是永不执行的存根（真被调到会抛错，用于暴露有人接上了 advisor）。
 
