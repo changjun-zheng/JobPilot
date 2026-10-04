@@ -6,7 +6,7 @@ This file provides guidance to AI coding agents when working with code in this r
 
 JobPilot 是面向求职流程的个人 Copilot 后端（Java 21 / Spring Boot 4.0 / Maven / MyBatis-Plus + MySQL / Redis / Spring AI 边界 / Ollama + Chroma）。
 
-**当前进度：I-0、I-1、I-2 已完成；I-3 进行中（I-3a 投递记录已完成，I-3b 长期记忆与 I-3c 用量计量未开始）。** **进度状态的唯一事实来源是 [`docs/ROADMAP.md`](./docs/ROADMAP.md)**——「做了哪些、还有哪些没做、当前阻塞什么、下一步做什么」一律以该文件为准，不要依赖本句或任何文档里的零散描述。本句只作概览，可能滞后。
+**当前进度：I-0 ~ I-3 已完成（I-3a 投递记录 / I-3b 长期记忆 / I-3c 用量计量·可归集）。** **进度状态的唯一事实来源是 [`docs/ROADMAP.md`](./docs/ROADMAP.md)**——「做了哪些、还有哪些没做、当前阻塞什么、下一步做什么」一律以该文件为准，不要依赖本句或任何文档里的零散描述。本句只作概览，可能滞后。
 
 仓库根目录 `README.md` 仍停留在骨架阶段的描述，与代码不符；设计与实施计划以 `docs/ARCHITECTURE.md` 为准，实际能力以 `src/main/java` 为准。
 
@@ -79,6 +79,7 @@ RAG 闭环需要同时具备：MySQL（Flyway 建表）、Ollama（`bge-m3` 嵌�
   - **没有 POST**：PRD-FP-4 只给用户查看/编辑/删除，记忆的唯一创建路径是 Agent 生成候选 → 审批。加直建接口等于多一条绕过审批的写入。
   - `source` / `sourceDraftId` / `confidence` **不可改**——记录「从哪来、当时多确信」，事后修改等于伪造出处。
   - 正文上限 512 字：**列宽就是「记忆不是知识库」的强制点**，长篇材料走文档导入。
+- `GET /api/v1/usage/summary?from=&to=` —— 用量汇总（**I-3c 可归集**）。三维度（EMBEDDING / LLM_TOKEN / AGENT_RUN）零填充 + 场景细分 + `tokenUnavailable`，存储维度对 `kb_document` 现查。**配额与限流不在本接口**，属 I-5。
 
 所有响应（含失败）都带 `requestId`：`RequestIdFilter` 生成、写入 MDC 与 `X-Request-Id` 响应头，用户报障时凭它对齐服务端日志。
 
@@ -131,6 +132,17 @@ query 嵌入 → Chroma top-K（where 过滤 `user_id` / 可选 `doc_type`）→
 **`AgentRunner.SYSTEM_PROMPT` 是功能性的，不是文案**：实测 qwen2.5:3b 在弱提示下反问用户而不调工具，把「必须先调 `knowledge_search`」写死后才稳定触发。删掉或弱化它会让真机闭环失效——而 mock 单测发现不了（它们直接返回 tool_calls）。
 
 **trace 独立成表**（`agent_trace` / `agent_trace_step`）是**结构保证**：检索只读 `kb_document`/`kb_chunk`，trace 不在其路径上，所以不需要过滤条件。改表结构时要保持这个前提。
+
+### 用量计量（`usage.UsageRecorder`，I-3c）
+
+只做「可归集」，配额与限流后置到 I-5（阈值等真实用量数据校准）。四条口径，改前先读类注释：
+
+1. **本地路径 0 成本仍计量**——计量的是「消耗了什么」不是「花了多少钱」，切云端时口径一行不改；
+2. **token 未返回记 NULL 不记 0**——Spring AI 在供应商未返回时给的是 `EmptyUsage` 占位（0/0）而不是 null，适配器已识别（不识别就会把「没数据」伪装成「零消耗」）；汇总接口用 `tokenUnavailable` 显式暴露缺口，不让「部分已知的合计」冒充完整总量；
+3. **检索入口 `search()` 必须显式传 `UsageScenario`**（ASK/SEARCH/AGENT/INGEST/EVAL）——编译器强迫每个调用点声明归属，刻意不设默认值：默认值会把归属错误静默吞掉；
+4. **存储用量不入事件行**——它是「当前态」不是事件流，汇总时对 `kb_document` 现查，不与删除时序赛跑。
+
+计量失败只告警不阻断业务（与 trace 同款旁路语义，REQUIRES_NEW）；`ChatPort.complete()` 已随 I-3c 删除——问答链路改走 `chat()` 才能带出 `TokenUsage`。
 
 ### 启动自检（`knowledge.ChromaStartupCheck`）
 
