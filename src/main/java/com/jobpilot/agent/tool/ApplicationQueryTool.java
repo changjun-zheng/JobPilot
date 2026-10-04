@@ -61,14 +61,14 @@ public class ApplicationQueryTool implements AgentTool {
 
     @Override
     public ToolExecutionResult execute(ToolExecutionContext context, String argumentsJson) {
-        return ApplicationToolSupport.guarded(context.callId(), name(), () -> {
-            JsonNode args = ApplicationToolSupport.parse(argumentsJson);
-            ApplicationToolSupport.warnForgedUserId(args, name(), context);
+        return AgentToolSupport.guarded(context.callId(), name(), () -> {
+            JsonNode args = AgentToolSupport.parse(argumentsJson);
+            AgentToolSupport.warnForgedUserId(args, name(), context);
             // 未知状态显式报错，不静默返回空列表——空列表会让模型以为「用户没有记录」
-            String rawStatus = ApplicationToolSupport.optionalText(args, "status");
+            String rawStatus = AgentToolSupport.optionalText(args, "status");
             ApplicationStatus status = rawStatus == null ? null : ApplicationStatus.parse(rawStatus);
-            LocalDate from = ApplicationToolSupport.optionalDate(args, "from");
-            LocalDate to = ApplicationToolSupport.optionalDate(args, "to");
+            LocalDate from = AgentToolSupport.optionalDate(args, "from");
+            LocalDate to = AgentToolSupport.optionalDate(args, "to");
             int limit = args.path("limit").asInt(0);
 
             List<ApplicationEntity> items = applicationService

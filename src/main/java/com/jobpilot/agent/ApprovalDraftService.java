@@ -41,6 +41,19 @@ public class ApprovalDraftService {
     private static final String STATUS_APPROVED = "APPROVED";
     private static final String STATUS_REJECTED = "REJECTED";
 
+    /**
+     * 审批通过的两种终态。
+     * <p>
+     * 封闭枚举而非裸字符串：终态会写进 {@code agent_approval_draft.status} 并出现在接口响应里，
+     * 拼错会得到一个既非 PENDING 也不被任何分支识别的中间值——与 {@code ErrorCode} 收成枚举同一理由。
+     */
+    public enum ApprovalOutcome {
+        /** 全部候选通过（单条工具也走这个） */
+        APPROVED,
+        /** 只通过用户勾选的那部分（PRD-FP-3.2「整批，可部分选择」） */
+        PARTIALLY_APPROVED
+    }
+
     private final AgentApprovalDraftMapper draftMapper;
 
     public ApprovalDraftService(AgentApprovalDraftMapper draftMapper) {
@@ -93,6 +106,26 @@ public class ApprovalDraftService {
      */
     @Transactional
     public boolean claimForApproval(String draftId) {
+        return claimForApproval(draftId, ApprovalOutcome.APPROVED, null);
+    }
+
+    /**
+     * 抢占审批权，并把草稿推向指定的终态。
+     * <p>
+     * <b>为什么终态是参数而不是另写一个方法</b>：幂等防线只看「状态是否还是 PENDING」，
+     * 不关心写进去的是哪个终态值——参数化不会削弱它。而复制一份「锁行 + 查状态 + 写 decidedAt/By」
+     * 的逻辑，两份迟早会漂移。
+     * <p>
+     * <b>本方法不自证事务</b>：它与调用方 {@code ApprovalExecutionService.approve} 同处一个事务
+     * （默认传播 REQUIRED）。所以调用方<b>必须在调用之前</b>把所有校验做完——一旦抢占提交而副作用
+     * 没执行，草稿就成了永久终态，此后每次 approve 都是静默 no-op，用户再也推不动它。
+     *
+     * @param outcome       写入的终态；批量工具按选中比例传 APPROVED 或 PARTIALLY_APPROVED
+     * @param selectionJson 用户勾选的候选 ID 数组；整批通过或单条工具传 null
+     * @return true = 本次抢到了审批权；false = 已被处理过（幂等返回，不重复执行）
+     */
+    @Transactional
+    public boolean claimForApproval(String draftId, ApprovalOutcome outcome, String selectionJson) {
         String approver = UserContext.require();
         // 幂等防线①：锁行。并发审批在这里串行化。
         AgentApprovalDraftEntity draft = draftMapper.selectByIdForUpdate(draftId);
@@ -102,11 +135,12 @@ public class ApprovalDraftService {
             throw new ApiException(ErrorCode.NOT_FOUND, "审批草稿不存在：" + draftId);
         }
         if (!STATUS_PENDING.equals(draft.getStatus())) {
-            // 已处理过：拒绝后不能再批、批过不能再批。不抛错，返回 false 让调用方按幂等返回。
+            // 已处理过：拒绝后不能再批、批过不能再批、部分批过同样不能再批。不抛错，返回 false 让调用方按幂等返回。
             log.info("审批草稿已处于终态，跳过重复执行 draftId={} status={}", draftId, draft.getStatus());
             return false;
         }
-        draft.setStatus(STATUS_APPROVED);
+        draft.setStatus(outcome.name());
+        draft.setApprovalSelection(selectionJson);
         draft.setDecidedAt(LocalDateTime.now());
         draft.setDecidedBy(approver);
         draftMapper.updateById(draft);

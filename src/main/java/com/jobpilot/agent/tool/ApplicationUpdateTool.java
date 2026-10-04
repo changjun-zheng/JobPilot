@@ -66,16 +66,16 @@ public class ApplicationUpdateTool implements AgentTool {
 
     @Override
     public ToolExecutionResult execute(ToolExecutionContext context, String argumentsJson) {
-        return ApplicationToolSupport.guarded(context.callId(), name(), () -> {
-            JsonNode args = ApplicationToolSupport.parse(argumentsJson);
-            ApplicationToolSupport.warnForgedUserId(args, name(), context);
-            String id = ApplicationToolSupport.requiredText(args, "id");
+        return AgentToolSupport.guarded(context.callId(), name(), () -> {
+            JsonNode args = AgentToolSupport.parse(argumentsJson);
+            AgentToolSupport.warnForgedUserId(args, name(), context);
+            String id = AgentToolSupport.requiredText(args, "id");
             // 传了哪些字段就改哪些：null = 不修改（空串在服务层解释为「清空」）
             ApplicationEntity updated = applicationService.update(id, new ApplicationService.Patch(
-                    ApplicationToolSupport.optionalText(args, "company"),
-                    ApplicationToolSupport.optionalText(args, "position"),
-                    ApplicationToolSupport.optionalText(args, "status"),
-                    ApplicationToolSupport.optionalDate(args, "appliedAt"),
+                    AgentToolSupport.optionalText(args, "company"),
+                    AgentToolSupport.optionalText(args, "position"),
+                    AgentToolSupport.optionalText(args, "status"),
+                    AgentToolSupport.optionalDate(args, "appliedAt"),
                     presentValue(args, "source"),
                     presentValue(args, "jdDocumentId"),
                     presentValue(args, "notes")));

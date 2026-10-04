@@ -65,18 +65,18 @@ public class ApplicationCreateTool implements AgentTool {
 
     @Override
     public ToolExecutionResult execute(ToolExecutionContext context, String argumentsJson) {
-        return ApplicationToolSupport.guarded(context.callId(), name(), () -> {
-            JsonNode args = ApplicationToolSupport.parse(argumentsJson);
-            ApplicationToolSupport.warnForgedUserId(args, name(), context);
+        return AgentToolSupport.guarded(context.callId(), name(), () -> {
+            JsonNode args = AgentToolSupport.parse(argumentsJson);
+            AgentToolSupport.warnForgedUserId(args, name(), context);
             ApplicationEntity created = applicationService.create(new ApplicationService.CreateCommand(
                     context.userId(),
-                    ApplicationToolSupport.requiredText(args, "company"),
-                    ApplicationToolSupport.requiredText(args, "position"),
-                    ApplicationToolSupport.requiredText(args, "status"),
-                    ApplicationToolSupport.optionalDate(args, "appliedAt"),
-                    ApplicationToolSupport.optionalText(args, "source"),
-                    ApplicationToolSupport.optionalText(args, "jdDocumentId"),
-                    ApplicationToolSupport.optionalText(args, "notes")));
+                    AgentToolSupport.requiredText(args, "company"),
+                    AgentToolSupport.requiredText(args, "position"),
+                    AgentToolSupport.requiredText(args, "status"),
+                    AgentToolSupport.optionalDate(args, "appliedAt"),
+                    AgentToolSupport.optionalText(args, "source"),
+                    AgentToolSupport.optionalText(args, "jdDocumentId"),
+                    AgentToolSupport.optionalText(args, "notes")));
             return "已创建投递记录（ID=" + created.getId() + "）："
                     + created.getCompany() + " · " + created.getPosition()
                     + "，状态 " + created.getStatus()

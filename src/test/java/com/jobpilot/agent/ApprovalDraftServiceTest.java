@@ -4,6 +4,7 @@ import com.jobpilot.domain.AgentApprovalDraftEntity;
 import com.jobpilot.knowledge.DocumentIngestService;
 import com.jobpilot.knowledge.IngestCommand;
 import com.jobpilot.domain.KbDocumentEntity;
+import com.jobpilot.memory.MemoryService;
 import com.jobpilot.security.UserContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -140,17 +141,19 @@ class ApprovalDraftServiceTest {
         KbDocumentEntity doc = new KbDocumentEntity();
         doc.setId("doc-new");
         when(ingestService.enqueue(any())).thenReturn(doc);
-        ApprovalExecutionService execution = new ApprovalExecutionService(draftService, ingestService);
+        ApprovalExecutionService execution = new ApprovalExecutionService(draftService, ingestService, mock(MemoryService.class));
 
         String draftId = draftService.createDraft(TENANT, "trace-1", "conv-1",
                 "save_jd_analysis_to_kb", "{\"content\":\"# 分析\"}");
         UserContext.set(TENANT);
 
-        String first = execution.approve(draftId);
-        String second = execution.approve(draftId);
+        ApprovalExecutionService.ApprovalResult first = execution.approve(draftId);
+        ApprovalExecutionService.ApprovalResult second = execution.approve(draftId);
 
-        assertThat(first).isEqualTo("doc-new");
-        assertThat(second).isEqualTo("doc-new");
+        assertThat(first.resultRef()).isEqualTo("doc-new");
+        // 第二次是幂等 no-op，返回的是**持久化**的结果，不是本次请求又执行了一遍
+        assertThat(second.resultRef()).isEqualTo("doc-new");
+        assertThat(second.status()).isEqualTo("APPROVED");
         // 关键：重复审批不得建出第二份文档
         verify(ingestService, times(1)).enqueue(any());
     }
@@ -159,7 +162,7 @@ class ApprovalDraftServiceTest {
     void rejectProducesNoSideEffectAtAll() {
         ApprovalDraftService draftService = holder.service();
         DocumentIngestService ingestService = mock(DocumentIngestService.class);
-        ApprovalExecutionService execution = new ApprovalExecutionService(draftService, ingestService);
+        ApprovalExecutionService execution = new ApprovalExecutionService(draftService, ingestService, mock(MemoryService.class));
 
         String draftId = draftService.createDraft(TENANT, "trace-1", "conv-1",
                 "save_jd_analysis_to_kb", "{\"content\":\"# 分析\"}");
@@ -241,11 +244,28 @@ class ApprovalDraftServiceTest {
                         .filter(d -> java.util.Objects.equals(d.getId(), updated.getId()))
                         .findFirst()
                         .map(d -> {
-                            d.setStatus(updated.getStatus());
-                            d.setDecidedAt(updated.getDecidedAt());
-                            d.setDecidedBy(updated.getDecidedBy());
-                            d.setResultRef(updated.getResultRef());
-                            d.setExecutedAt(updated.getExecutedAt());
+                            // 只复制非空字段——真实 MyBatis-Plus 的 updateById 默认按 NOT_NULL 策略
+                            // 生成 SET 子句，部分实体不会把未设置的列清成 NULL。
+                            // 全量复制会让 recordResult（只带 id/resultRef/executedAt）把 status 抹掉，
+                            // 那是假实现比真实现更严格，会掩盖真实行为。
+                            if (updated.getStatus() != null) {
+                                d.setStatus(updated.getStatus());
+                            }
+                            if (updated.getApprovalSelection() != null) {
+                                d.setApprovalSelection(updated.getApprovalSelection());
+                            }
+                            if (updated.getDecidedAt() != null) {
+                                d.setDecidedAt(updated.getDecidedAt());
+                            }
+                            if (updated.getDecidedBy() != null) {
+                                d.setDecidedBy(updated.getDecidedBy());
+                            }
+                            if (updated.getResultRef() != null) {
+                                d.setResultRef(updated.getResultRef());
+                            }
+                            if (updated.getExecutedAt() != null) {
+                                d.setExecutedAt(updated.getExecutedAt());
+                            }
                             return d;
                         })
                         .map(d -> 1)

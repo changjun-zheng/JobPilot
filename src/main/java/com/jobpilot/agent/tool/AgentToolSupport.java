@@ -28,13 +28,13 @@ import java.util.function.Supplier;
  * 若把整段都包进 catch，真正的程序 bug（NPE 之类）会被伪装成「模型参数写错了」，
  * trace 里的归因就骗人了。
  */
-final class ApplicationToolSupport {
+final class AgentToolSupport {
 
-    private static final Logger log = LoggerFactory.getLogger(ApplicationToolSupport.class);
+    private static final Logger log = LoggerFactory.getLogger(AgentToolSupport.class);
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private ApplicationToolSupport() {
+    private AgentToolSupport() {
     }
 
     /** 解析参数；坏 JSON 抛 {@link IllegalArgumentException}，由 {@link #guarded} 统一转成失败结果 */
@@ -92,13 +92,28 @@ final class ApplicationToolSupport {
      * @param action  真正的业务调用；返回给模型看的摘要文本
      */
     static ToolExecutionResult guarded(String callId, String toolName, Supplier<String> action) {
+        return guardedResult(callId, toolName,
+                () -> ToolExecutionResult.success(callId, toolName, action.get(), null));
+    }
+
+    /** 需要自带结构化 data（如回传 draftId）时用这个；失败映射与 {@link #guarded} 完全一致 */
+    static ToolExecutionResult guardedResult(String callId, String toolName, ToolBody body) {
         try {
-            return ToolExecutionResult.success(callId, toolName, action.get(), null);
+            return body.run();
         } catch (IllegalArgumentException e) {
             return ToolExecutionResult.failed(callId, toolName, e.getMessage(), ToolErrorCode.INVALID_ARGUMENTS);
         } catch (ApiException e) {
             // 不存在与跨租户在服务层已被合并成同一个 NOT_FOUND，消息里不会泄漏他人数据的存在性
             return ToolExecutionResult.failed(callId, toolName, e.getMessage(), ToolErrorCode.NOT_FOUND);
         }
+    }
+
+    /**
+     * 工具主体；刻意不用 {@code Supplier<ToolExecutionResult>}，因为那与 {@code Supplier<String>}
+     * 擦除后签名相同，无法重载。
+     */
+    @FunctionalInterface
+    interface ToolBody {
+        ToolExecutionResult run();
     }
 }

@@ -127,8 +127,11 @@ public class AgentRunner {
                - 问「投了哪些」「有没有跟进」→ application_query；
                - 问「总共投了多少家」「多少在面试」→ application_stats；
                - **创建前先 application_query 查重**，同一公司同一岗位不要重复录入；
-            7. 投递类工具的日期参数用 yyyy-MM-dd；状态取值以工具说明里列出的枚举为准，不要自造；
-            8. 回答使用简体中文，简洁分点。
+            7. 面试复盘、简历分析后若发现值得长期记住的偏好、弱点或计划，用 memory_candidate_create
+               提炼成候选条目。**它会生成待审批草稿，不会立即生效**——必须告诉用户去确认；
+               记忆只放短小条目（一条一句话），长篇材料用 save_jd_analysis_to_kb 存进知识库；
+            8. 投递类工具的日期参数用 yyyy-MM-dd；状态取值以工具说明里列出的枚举为准，不要自造；
+            9. 回答使用简体中文，简洁分点。
             """;
 
     public RunResult run(RunRequest request) {

@@ -32,6 +32,14 @@ public class AgentApprovalDraftEntity {
     private String idempotencyKey;
     /** 审批通过并执行后产生的资源 ID（如新建文档 ID） */
     private String resultRef;
+    /**
+     * 部分审批时用户勾选的候选 ID 数组（JSON，意图）。
+     * <p>
+     * 与「实际写入的行」（按 {@code user_memory.source_draft_id} 回查）分开存：用户删掉某条记忆后，
+     * 效果侧的痕迹就没了，而**审批记录必须留存**——这正是 HITL 审计的意义。
+     * 整批通过或单条工具为 null。
+     */
+    private String approvalSelection;
     private LocalDateTime executedAt;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -124,10 +132,17 @@ public class AgentApprovalDraftEntity {
         this.resultRef = resultRef;
     }
 
+    public String getApprovalSelection() {
+        return approvalSelection;
+    }
+
+    public void setApprovalSelection(String approvalSelection) {
+        this.approvalSelection = approvalSelection;
+    }
+
     public LocalDateTime getExecutedAt() {
         return executedAt;
     }
-
     public void setExecutedAt(LocalDateTime executedAt) {
         this.executedAt = executedAt;
     }

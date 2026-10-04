@@ -58,11 +58,11 @@ public class ApplicationStatsTool implements AgentTool {
 
     @Override
     public ToolExecutionResult execute(ToolExecutionContext context, String argumentsJson) {
-        return ApplicationToolSupport.guarded(context.callId(), name(), () -> {
-            JsonNode args = ApplicationToolSupport.parse(argumentsJson);
-            ApplicationToolSupport.warnForgedUserId(args, name(), context);
-            LocalDate from = ApplicationToolSupport.optionalDate(args, "from");
-            LocalDate to = ApplicationToolSupport.optionalDate(args, "to");
+        return AgentToolSupport.guarded(context.callId(), name(), () -> {
+            JsonNode args = AgentToolSupport.parse(argumentsJson);
+            AgentToolSupport.warnForgedUserId(args, name(), context);
+            LocalDate from = AgentToolSupport.optionalDate(args, "from");
+            LocalDate to = AgentToolSupport.optionalDate(args, "to");
 
             ApplicationService.Stats stats = applicationService.stats(from, to);
             StringBuilder sb = new StringBuilder("投递总数：" + stats.total() + "\n按状态：\n");

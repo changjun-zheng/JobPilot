@@ -111,8 +111,8 @@ class ApprovalIntegrationTest extends MySqlIntegrationTestBase {
         String draftId = draftService.createDraft(TENANT_A, "trace-1", "conv-1",
                 "save_jd_analysis_to_kb", "{\"name\":\"JD.md\",\"content\":\"# 分析\\n内容\"}");
 
-        String firstDocId = executionService.approve(draftId);
-        String secondDocId = executionService.approve(draftId);
+        String firstDocId = executionService.approve(draftId).resultRef();
+        String secondDocId = executionService.approve(draftId).resultRef();
 
         assertThat(firstDocId).isEqualTo(secondDocId);
         // 关键断言：重复审批不得建出第二份文档
@@ -146,8 +146,8 @@ class ApprovalIntegrationTest extends MySqlIntegrationTestBase {
         assertThat(documentMapper.selectList(
                 new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<KbDocumentEntity>())).isEmpty();
 
-        // 拒绝后再批也不该执行
-        assertThat(executionService.approve(draftId)).isNull();
+        // 拒绝后再批也不该执行：返回的是持久化的 REJECTED 终态，resultRef 为空
+        assertThat(executionService.approve(draftId).resultRef()).isNull();
         assertThat(documentMapper.selectList(
                 new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<KbDocumentEntity>())).isEmpty();
     }
