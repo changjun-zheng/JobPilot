@@ -9,6 +9,7 @@ import com.jobpilot.knowledge.IngestCommand;
 import com.jobpilot.knowledge.KnowledgeRetrievalService;
 import com.jobpilot.security.UserContext;
 import com.jobpilot.support.MySqlIntegrationTestBase;
+import com.jobpilot.usage.UsageScenario;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -88,7 +89,7 @@ class RetrievalEvalRunner extends MySqlIntegrationTestBase {
 
     private CaseResult runCase(String documentId, EvalCase evalCase) {
         RetrievalResult result = retrievalService.search(new RetrievalQuery(
-                EVAL_USER, evalCase.question(), 5, null));
+                EVAL_USER, evalCase.question(), 5, null), UsageScenario.EVAL);
 
         List<String> top5Paths = result.items().stream()
                 .map(item -> item.citation().sectionPath())

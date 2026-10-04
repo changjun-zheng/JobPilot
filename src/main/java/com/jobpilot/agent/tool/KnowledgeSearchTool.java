@@ -11,6 +11,7 @@ import com.jobpilot.ai.ToolErrorCode;
 import com.jobpilot.ai.ToolExecutionContext;
 import com.jobpilot.ai.ToolExecutionResult;
 import com.jobpilot.knowledge.KnowledgeRetrievalService;
+import com.jobpilot.usage.UsageScenario;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -90,7 +91,7 @@ public class KnowledgeSearchTool implements AgentTool {
 
         // 租户唯一来源：上下文，不是参数
         RetrievalResult result = retrievalService.search(
-                new RetrievalQuery(context.userId(), query, topK, docType));
+                new RetrievalQuery(context.userId(), query, topK, docType), UsageScenario.AGENT);
         List<RetrievedChunk> items = result.items();
         if (items.isEmpty()) {
             return ToolExecutionResult.success(context.callId(), name(),

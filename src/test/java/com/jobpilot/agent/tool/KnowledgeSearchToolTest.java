@@ -10,6 +10,7 @@ import com.jobpilot.ai.ToolExecutionContext;
 import com.jobpilot.ai.ToolExecutionResult;
 import com.jobpilot.ai.ToolResultStatus;
 import com.jobpilot.knowledge.KnowledgeRetrievalService;
+import com.jobpilot.usage.UsageScenario;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -18,6 +19,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -45,13 +47,13 @@ class KnowledgeSearchToolTest {
 
     @Test
     void tenantIdComesFromContextAndForgedArgumentIsIgnored() {
-        when(retrievalService.search(any())).thenReturn(RetrievalResult.vector(List.of()));
+        when(retrievalService.search(any(), eq(UsageScenario.AGENT))).thenReturn(RetrievalResult.vector(List.of()));
 
         // 模型在参数里塞了别人的 userId
         tool.execute(context(TENANT_B), "{\"query\":\"Java 经验\",\"userId\":\"" + VICTIM + "\"}");
 
         ArgumentCaptor<RetrievalQuery> captor = ArgumentCaptor.forClass(RetrievalQuery.class);
-        verify(retrievalService).search(captor.capture());
+        verify(retrievalService).search(captor.capture(), eq(UsageScenario.AGENT));
 
         // 关键断言：下游看到的是认证上下文的租户，不是模型编的那个
         assertThat(captor.getValue().userId()).isEqualTo(TENANT_B);
@@ -62,7 +64,7 @@ class KnowledgeSearchToolTest {
     @Test
     void returnsNumberedEvidenceWithCitations() {
         RetrievedChunk chunk = chunk("doc-1#0#1", "熟悉 RAG 与 Agent");
-        when(retrievalService.search(any())).thenReturn(RetrievalResult.vector(List.of(chunk)));
+        when(retrievalService.search(any(), eq(UsageScenario.AGENT))).thenReturn(RetrievalResult.vector(List.of(chunk)));
 
         ToolExecutionResult result = tool.execute(context(TENANT_B), "{\"query\":\"RAG\"}");
 
@@ -74,7 +76,7 @@ class KnowledgeSearchToolTest {
 
     @Test
     void degradedSearchTellsTheModelRetrievalWasDegraded() {
-        when(retrievalService.search(any())).thenReturn(RetrievalResult.keywordFallback(List.of()));
+        when(retrievalService.search(any(), eq(UsageScenario.AGENT))).thenReturn(RetrievalResult.keywordFallback(List.of()));
 
         ToolExecutionResult result = tool.execute(context(TENANT_B), "{\"query\":\"查不到的东西\"}");
 
@@ -88,7 +90,7 @@ class KnowledgeSearchToolTest {
 
         assertThat(result.status()).isEqualTo(ToolResultStatus.FAILED);
         assertThat(result.errorCode()).isEqualTo("INVALID_ARGUMENTS");
-        verify(retrievalService, never()).search(any());
+        verify(retrievalService, never()).search(any(), any());
     }
 
     @Test
@@ -97,7 +99,7 @@ class KnowledgeSearchToolTest {
 
         assertThat(result.status()).isEqualTo(ToolResultStatus.FAILED);
         assertThat(result.errorCode()).isEqualTo("INVALID_ARGUMENTS");
-        verify(retrievalService, never()).search(any());
+        verify(retrievalService, never()).search(any(), any());
     }
 
     private ToolExecutionContext context(String userId) {

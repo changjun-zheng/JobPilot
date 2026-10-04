@@ -32,8 +32,9 @@ import java.sql.Statement;
  * <p>
  * CI（{@code .github/workflows/ci.yml}）显式设置该开关，因此它仍然是「任何机器都能跑」的。
  *
- * <p>清表语句是字面量而非拼接：表的集合是封闭的（业务四表 + flyway 历史），动态拼标识符
+ * <p>清表语句是字面量而非拼接：表的集合是封闭的（全部业务表 + flyway 历史），动态拼标识符
  * 既没有必要，也过不了安全扫描（标识符无法参数化，拼接是唯一写法）。
+ * 新增业务表时必须同步补进 {@link #resetSchema()}，否则容器分支会因残留行而假失败。
  */
 public abstract class MySqlIntegrationTestBase {
 
@@ -91,6 +92,7 @@ public abstract class MySqlIntegrationTestBase {
                 MYSQL.getJdbcUrl(), MYSQL.getUsername(), MYSQL.getPassword());
              Statement statement = connection.createStatement()) {
             statement.execute("SET FOREIGN_KEY_CHECKS = 0");
+            statement.execute("DROP TABLE IF EXISTS usage_record");
             statement.execute("DROP TABLE IF EXISTS user_memory");
             statement.execute("DROP TABLE IF EXISTS job_application");
             statement.execute("DROP TABLE IF EXISTS agent_approval_draft");

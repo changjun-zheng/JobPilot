@@ -3,6 +3,7 @@ package com.jobpilot.mapper;
 import com.baomidou.mybatisplus.annotation.InterceptorIgnore;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.jobpilot.domain.KbDocumentEntity;
+import com.jobpilot.usage.StorageUsageRow;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
@@ -11,6 +12,19 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 public interface KbDocumentMapper extends BaseMapper<KbDocumentEntity> {
+
+    /**
+     * 存储用量（PRD-FP-10 维度四：文档数、字符数）。
+     * <p>
+     * 刻意<b>不入 usage_record 事件行</b>：存储是「当前态」不是「事件流」，现查永远准确，
+     * 也不会跟删除时序赛跑。user_id 过滤由租户拦截器追加（本 SQL 不写，隔离不靠调用方）。
+     */
+    @Select("""
+            SELECT COUNT(*) AS document_count,
+                   COALESCE(SUM(CHAR_LENGTH(content)), 0) AS char_count
+            FROM kb_document
+            """)
+    StorageUsageRow selectStorageUsage();
 
     /**
      * 以下四个方法是 I-1c 的 DB 队列操作，运行在 worker 线程上——

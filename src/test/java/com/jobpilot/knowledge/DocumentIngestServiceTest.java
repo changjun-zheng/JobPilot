@@ -10,6 +10,8 @@ import com.jobpilot.domain.KbChunkEntity;
 import com.jobpilot.domain.KbDocumentEntity;
 import com.jobpilot.mapper.KbChunkMapper;
 import com.jobpilot.mapper.KbDocumentMapper;
+import com.jobpilot.usage.UsageRecorder;
+import com.jobpilot.usage.UsageScenario;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -41,6 +43,7 @@ class DocumentIngestServiceTest {
     private KbChunkMapper chunkMapper;
     private EmbeddingPort embeddingPort;
     private VectorStorePort vectorStore;
+    private UsageRecorder usageRecorder;
     private DocumentIngestService service;
 
     @BeforeEach
@@ -49,11 +52,13 @@ class DocumentIngestServiceTest {
         chunkMapper = mock(KbChunkMapper.class);
         embeddingPort = mock(EmbeddingPort.class);
         vectorStore = mock(VectorStorePort.class);
+        usageRecorder = mock(UsageRecorder.class);
         RagProperties props = new RagProperties(
                 "http://localhost:11434", "bge-m3", "qwen2.5:3b",
                 "http://localhost:8000", "jobpilot_chunks", null, 500, 100, 5, 0.45, 2);
         service = new DocumentIngestService(
-                documentMapper, chunkMapper, new ChunkSplitter(), embeddingPort, vectorStore, props, INGEST_PROPS);
+                documentMapper, chunkMapper, new ChunkSplitter(), embeddingPort, vectorStore, props,
+                INGEST_PROPS, usageRecorder);
 
         // 模拟 MyBatis-Plus ASSIGN_UUID：insert 时补齐文档 ID
         doAnswer(invocation -> {
@@ -100,6 +105,16 @@ class DocumentIngestServiceTest {
         verify(vectorStore, atLeastOnce()).upsert(ids.capture(), any(), anyMap());
         // 向量 ID 形如 docId#seq#indexVersion，重试重建走 upsert 幂等
         assertThat(ids.getAllValues()).allMatch(id -> id.startsWith("doc-test#") && id.endsWith("#1"));
+
+        // FP-10：成功导入按文档聚合记一行（call_count = Chunk 数，char_count = 码点总数）
+        org.mockito.Mockito.verify(usageRecorder).recordEmbedding(
+                org.mockito.ArgumentMatchers.eq("u1"),
+                org.mockito.ArgumentMatchers.eq(UsageScenario.INGEST),
+                org.mockito.ArgumentMatchers.eq("bge-m3"),
+                org.mockito.ArgumentMatchers.anyInt(),
+                org.mockito.ArgumentMatchers.anyInt(),
+                org.mockito.ArgumentMatchers.eq(true),
+                org.mockito.ArgumentMatchers.eq("doc-test"));
     }
 
     @Test
@@ -119,6 +134,10 @@ class DocumentIngestServiceTest {
         // 幂等清理只发生一次（attempt 开头，Chunk + 旧向量）；重排队路径不再重复删
         verify(chunkMapper).delete(any(Wrapper.class));
         verify(vectorStore).deleteByDocumentId("doc-test");
+        // 嵌入在第一个 Chunk 就失败：没有已发生的消耗，不记计量行
+        org.mockito.Mockito.verify(usageRecorder, never()).recordEmbedding(
+                any(), any(), any(), org.mockito.ArgumentMatchers.anyInt(),
+                org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyBoolean(), any());
     }
 
     @Test
@@ -135,6 +154,12 @@ class DocumentIngestServiceTest {
         assertThat(saved.getValue().getErrorMessage()).contains("Chroma 不可达");
         // 开头的幂等清理 + 终态 FAILED 的残留清理
         org.mockito.Mockito.verify(chunkMapper, org.mockito.Mockito.times(2)).delete(any(Wrapper.class));
+        // 部分消耗也如实记录：嵌入已发生但 upsert 失败 → FAILED 聚合行
+        org.mockito.Mockito.verify(usageRecorder).recordEmbedding(
+                org.mockito.ArgumentMatchers.eq("u1"), org.mockito.ArgumentMatchers.eq(UsageScenario.INGEST),
+                org.mockito.ArgumentMatchers.eq("bge-m3"), org.mockito.ArgumentMatchers.anyInt(),
+                org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.eq(false),
+                org.mockito.ArgumentMatchers.eq("doc-test"));
     }
 
     @Test
@@ -150,6 +175,10 @@ class DocumentIngestServiceTest {
         assertThat(saved.getValue().getNextRetryAt()).isNull();
         assertThat(saved.getValue().getErrorMessage()).contains("提取文本为空");
         verify(chunkMapper, never()).insert(any(KbChunkEntity.class));
+        // 校验失败发生在任何嵌入之前：没有消耗，也没有计量行
+        org.mockito.Mockito.verify(usageRecorder, never()).recordEmbedding(
+                any(), any(), any(), org.mockito.ArgumentMatchers.anyInt(),
+                org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyBoolean(), any());
     }
 
     @Test

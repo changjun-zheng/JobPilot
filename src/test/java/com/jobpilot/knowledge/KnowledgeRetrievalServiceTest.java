@@ -8,6 +8,8 @@ import com.jobpilot.ai.VectorStorePort;
 import com.jobpilot.config.RagProperties;
 import com.jobpilot.mapper.KbChunkMapper;
 import com.jobpilot.mapper.KbDocumentMapper;
+import com.jobpilot.usage.UsageRecorder;
+import com.jobpilot.usage.UsageScenario;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -19,6 +21,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -31,6 +34,7 @@ class KnowledgeRetrievalServiceTest {
     private EmbeddingPort embeddingPort;
     private VectorStorePort vectorStore;
     private ChatPort chatPort;
+    private UsageRecorder usageRecorder;
     private KnowledgeRetrievalService retrievalService;
     private RagAskService askService;
 
@@ -41,12 +45,13 @@ class KnowledgeRetrievalServiceTest {
         embeddingPort = mock(EmbeddingPort.class);
         vectorStore = mock(VectorStorePort.class);
         chatPort = mock(ChatPort.class);
+        usageRecorder = mock(UsageRecorder.class);
         RagProperties props = new RagProperties(
                 "http://localhost:11434", "bge-m3", "qwen2.5:3b",
                 "http://localhost:8000", "jobpilot_chunks", null, 500, 100, 5, 0.45,2);
         retrievalService = new KnowledgeRetrievalService(
-                chunkMapper, documentMapper, embeddingPort, vectorStore, props);
-        askService = new RagAskService(retrievalService, chatPort);
+                chunkMapper, documentMapper, embeddingPort, vectorStore, props, usageRecorder);
+        askService = new RagAskService(retrievalService, chatPort, usageRecorder);
     }
 
     @Test
@@ -58,11 +63,14 @@ class KnowledgeRetrievalServiceTest {
         when(documentMapper.selectList(any())).thenReturn(List.of(readyDoc()));
 
         RetrievalResult result = retrievalService.search(
-                new com.jobpilot.ai.RetrievalQuery("u1", "会用 RAG 吗", 5, null));
+                new com.jobpilot.ai.RetrievalQuery("u1", "会用 RAG 吗", 5, null), UsageScenario.SEARCH);
 
         assertThat(result.searchMode()).isEqualTo(com.jobpilot.ai.SearchMode.VECTOR);
         assertThat(result.items()).hasSize(1);
         assertThat(result.items().get(0).score()).isEqualTo(0.8);
+        // FP-10：嵌入成功即计一行，字符数按码点计
+        verify(usageRecorder).recordEmbedding(eq("u1"), eq(UsageScenario.SEARCH), eq("bge-m3"),
+                eq("会用 RAG 吗".codePointCount(0, "会用 RAG 吗".length())), eq(1), eq(true), isNull());
     }
 
     @Test
@@ -87,6 +95,8 @@ class KnowledgeRetrievalServiceTest {
         when(chunkMapper.selectList(any()))
                 .thenReturn(List.of(chunk("doc1#0#1", "熟悉 RAG 开发，有 3 年经验")));
         when(documentMapper.selectList(any())).thenReturn(List.of(readyDoc()));
+        when(chatPort.chat(any())).thenReturn(new com.jobpilot.ai.ChatCompletion(
+                "回答", List.of(), com.jobpilot.ai.FinishReason.STOP, null, "test", "test-model"));
 
         RagAskService.AskAnswer answer = askService.ask("u1", "RAG 经验", 5, null);
 
@@ -95,7 +105,7 @@ class KnowledgeRetrievalServiceTest {
                 .isEqualTo(com.jobpilot.ai.SearchMode.KEYWORD_FALLBACK);
         assertThat(answer.retrieval().items()).hasSize(1);
         // 降级命中且过闸门后仍会走生成，并带上降级证据
-        verify(chatPort).complete(anyString(), anyString());
+        verify(chatPort).chat(any());
     }
 
     @Test
@@ -106,7 +116,7 @@ class KnowledgeRetrievalServiceTest {
         when(documentMapper.selectList(any())).thenReturn(List.of());
 
         RetrievalResult result = retrievalService.search(
-                new com.jobpilot.ai.RetrievalQuery("u1", "RAG 经验", 5, null));
+                new com.jobpilot.ai.RetrievalQuery("u1", "RAG 经验", 5, null), UsageScenario.SEARCH);
 
         assertThat(result.degraded()).isTrue();
         assertThat(result.searchMode()).isEqualTo(com.jobpilot.ai.SearchMode.KEYWORD_FALLBACK);
@@ -137,9 +147,11 @@ class KnowledgeRetrievalServiceTest {
         when(chunkMapper.selectList(any())).thenReturn(List.of());
 
         RetrievalResult result = retrievalService.search(
-                new com.jobpilot.ai.RetrievalQuery("u1", "查询", 0, null));
+                new com.jobpilot.ai.RetrievalQuery("u1", "查询", 0, null), UsageScenario.SEARCH);
 
         assertThat(result.degraded()).isTrue();
+        // 嵌入调用本身失败：没有可归集的消耗，不记计量行
+        verifyNoInteractions(usageRecorder);
     }
 
     @Test
@@ -167,7 +179,7 @@ class KnowledgeRetrievalServiceTest {
         when(documentMapper.selectList(any())).thenReturn(List.of(readyDoc()));
 
         RetrievalResult result = retrievalService.search(
-                new com.jobpilot.ai.RetrievalQuery("u1", "会用 RAG 吗", 2, null));
+                new com.jobpilot.ai.RetrievalQuery("u1", "会用 RAG 吗", 2, null), UsageScenario.SEARCH);
 
         // 用户要 2 条，候选池里 6 条都过阈值——截断后应是分数最高的 2 条，且顺序保持
         assertThat(result.items()).extracting(RetrievedChunk::chunkId)

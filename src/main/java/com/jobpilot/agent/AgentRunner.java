@@ -28,6 +28,8 @@ import com.jobpilot.ai.ToolErrorCode;
 import com.jobpilot.ai.ToolExecutionContext;
 import com.jobpilot.ai.ToolExecutionResult;
 import com.jobpilot.ai.ToolResultStatus;
+import com.jobpilot.usage.UsageRecorder;
+import com.jobpilot.usage.UsageScenario;
 
 /**
  * 自研的同步 ReAct 循环（ARCHITECTURE.md §4.3 / §6）。
@@ -62,16 +64,19 @@ public class AgentRunner {
     private final ChatPort chatPort;
     private final AgentToolRegistry toolRegistry;
     private final AgentTraceRecorder traceRecorder;
+    private final UsageRecorder usageRecorder;
     private final AgentProperties props;
     private final ExecutorService llmExecutor;
 
     public AgentRunner(ChatPort chatPort,
                        AgentToolRegistry toolRegistry,
                        AgentTraceRecorder traceRecorder,
+                       UsageRecorder usageRecorder,
                        AgentProperties props) {
         this.chatPort = chatPort;
         this.toolRegistry = toolRegistry;
         this.traceRecorder = traceRecorder;
+        this.usageRecorder = usageRecorder;
         this.props = props;
         // 复用项目既有的守护线程工厂（与 IngestWorker 同一写法），不用裸 new Thread：
         // 后者会被 check-arch.sh 的 no-raw-thread 规则拦下
@@ -150,6 +155,7 @@ public class AgentRunner {
         List<String> draftIds = new ArrayList<>();
         int iterations = 0;
         int toolCalls = 0;
+        String lastModel = props.model();
         long startedAt = System.currentTimeMillis();
 
         traceRecorder.start(traceId, userId, conversationId,
@@ -159,7 +165,8 @@ public class AgentRunner {
             if (iterations >= props.maxIterations()) {
                 return finish(traceId, userId, conversationId, startedAt, steps, draftIds,
                         FinishReason.BUDGET_EXHAUSTED,
-                        "已达到最大迭代次数 " + props.maxIterations() + "，未能得出结论。", "BUDGET_EXHAUSTED");
+                        "已达到最大迭代次数 " + props.maxIterations() + "，未能得出结论。", "BUDGET_EXHAUSTED",
+                        iterations, toolCalls, lastModel);
             }
             iterations++;
             long callStart = System.currentTimeMillis();
@@ -172,8 +179,11 @@ public class AgentRunner {
                 traceRecorder.step(traceId, userId, iterations, "model", "unknown", "failed",
                         cost, safeMessage(e), null, ToolErrorCode.TIMEOUT);
                 log.warn("Agent 模型调用失败 traceId={} iteration={}", traceId, iterations, e);
+                // 最终失败也计一行：调用确实发生了（消耗不可知 → tokens 为 NULL），不能凭空消失
+                usageRecorder.recordLlmCall(userId, UsageScenario.AGENT, props.model(), null, false, traceId);
                 return finish(traceId, userId, conversationId, startedAt, steps, draftIds,
-                        FinishReason.ERROR, "模型调用失败，请稍后重试。", "ERROR");
+                        FinishReason.ERROR, "模型调用失败，请稍后重试。", "ERROR",
+                        iterations, toolCalls, lastModel);
             }
 
             long modelCost = System.currentTimeMillis() - callStart;
@@ -181,12 +191,18 @@ public class AgentRunner {
                     modelCost, "ok", summarize(completion.content())));
             traceRecorder.step(traceId, userId, iterations, "model", "chat", "ok",
                     modelCost, summarize(completion.content()), null, null);
+            usageRecorder.recordLlmCall(userId, UsageScenario.AGENT, completion.model(),
+                    completion.usage(), true, traceId);
+            if (completion.model() != null) {
+                lastModel = completion.model();
+            }
 
             // 终止条件一：模型不再请求工具 → 这是最终答案
             if (!completion.hasToolCalls()) {
                 history.add(new AgentMessage.Assistant(completion.content(), List.of()));
                 return finish(traceId, userId, conversationId, startedAt, steps, draftIds,
-                        FinishReason.STOP, completion.content(), "OK");
+                        FinishReason.STOP, completion.content(), "OK",
+                        iterations, toolCalls, lastModel);
             }
 
             history.add(new AgentMessage.Assistant(completion.content(), completion.toolCalls()));
@@ -198,7 +214,7 @@ public class AgentRunner {
                     return finish(traceId, userId, conversationId, startedAt, steps, draftIds,
                             FinishReason.BUDGET_EXHAUSTED,
                             "已达到工具调用上限 " + props.maxToolCallsPerRun() + "，中止本轮。",
-                            "BUDGET_EXHAUSTED");
+                            "BUDGET_EXHAUSTED", iterations, toolCalls, lastModel);
                 }
                 toolCalls++;
                 long toolStart = System.currentTimeMillis();
@@ -227,7 +243,7 @@ public class AgentRunner {
             if (pendingApproval) {
                 return finish(traceId, userId, conversationId, startedAt, steps, draftIds,
                         FinishReason.STOP, "已生成待审批草稿，请前往审批中心确认后再执行。",
-                        "PENDING_APPROVAL");
+                        "PENDING_APPROVAL", iterations, toolCalls, lastModel);
             }
             history = compactIfTooLong(history, traceId, userId, iterations);
         }
@@ -313,11 +329,18 @@ public class AgentRunner {
         return new ArrayList<>(history.subList(history.size() - MAX_CONTEXT_MESSAGES, history.size()));
     }
 
+    /**
+     * 收尾：trace 终态 + 一行 AGENT_RUN 计量（PRD-FP-10「Agent 调用次数按 run 统计，含工具调用次数」）。
+     * {@code finishReason == ERROR} 视为失败行，其余终态（含预算耗尽）都是真实发生的 run。
+     */
     private RunResult finish(String traceId, String userId, String conversationId, long startedAt,
                              List<Step> steps, List<String> draftIds,
-                             FinishReason reason, String answer, String status) {
+                             FinishReason reason, String answer, String status,
+                             int iterations, int toolCalls, String model) {
         long cost = System.currentTimeMillis() - startedAt;
         traceRecorder.finish(traceId, userId, conversationId, cost, status, reason.name());
+        usageRecorder.recordAgentRun(userId, model, iterations, toolCalls,
+                !"ERROR".equals(status), traceId);
         return new RunResult(traceId, conversationId, answer, reason, List.copyOf(steps), List.copyOf(draftIds));
     }
 

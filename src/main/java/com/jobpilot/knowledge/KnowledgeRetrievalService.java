@@ -14,6 +14,8 @@ import com.jobpilot.domain.KbDocumentEntity;
 import com.jobpilot.mapper.KbChunkMapper;
 import com.jobpilot.mapper.KbDocumentMapper;
 import com.jobpilot.security.UserContext;
+import com.jobpilot.usage.UsageRecorder;
+import com.jobpilot.usage.UsageScenario;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -48,20 +50,29 @@ public class KnowledgeRetrievalService {
     private final EmbeddingPort embeddingPort;
     private final VectorStorePort vectorStore;
     private final RagProperties props;
+    private final UsageRecorder usageRecorder;
 
     public KnowledgeRetrievalService(KbChunkMapper chunkMapper,
                                      KbDocumentMapper documentMapper,
                                      EmbeddingPort embeddingPort,
                                      VectorStorePort vectorStore,
-                                     RagProperties props) {
+                                     RagProperties props,
+                                     UsageRecorder usageRecorder) {
         this.chunkMapper = chunkMapper;
         this.documentMapper = documentMapper;
         this.embeddingPort = embeddingPort;
         this.vectorStore = vectorStore;
         this.props = props;
+        this.usageRecorder = usageRecorder;
     }
 
-    public RetrievalResult search(RetrievalQuery query) {
+    /**
+     * 检索（FP-10：查询嵌入按租户计量）。
+     * <p>
+     * {@code scenario} 由调用方显式声明——同一个检索动作在问答 / 纯检索 / Agent / 评测里的
+     * 归属不同，编译器强迫每个调用点选边，不给「默认场景」留吞掉归属错误的余地。
+     */
+    public RetrievalResult search(RetrievalQuery query, UsageScenario scenario) {
         if (query.userId() == null || query.userId().isBlank()
                 || query.text() == null || query.text().isBlank()) {
             throw new IllegalArgumentException("userId 与查询文本不能为空");
@@ -72,7 +83,7 @@ public class KnowledgeRetrievalService {
         }
         int topK = query.topK() > 0 ? query.topK() : props.topK();
         try {
-            return vectorSearch(query, topK);
+            return vectorSearch(query, topK, scenario);
         } catch (UnauthorizedException e) {
             throw e;
         } catch (Exception e) {
@@ -81,8 +92,11 @@ public class KnowledgeRetrievalService {
         }
     }
 
-    private RetrievalResult vectorSearch(RetrievalQuery query, int topK) {
+    private RetrievalResult vectorSearch(RetrievalQuery query, int topK, UsageScenario scenario) {
         List<Double> queryVector = embeddingPort.embed(query.text());
+        // 嵌入一旦成功就是真实消耗，无论后续 Chroma 是否失败——所以紧跟 embed 记账
+        usageRecorder.recordEmbedding(query.userId(), scenario, props.embeddingModel(),
+                query.text().codePointCount(0, query.text().length()), 1, true, null);
         Map<String, Object> filters = new LinkedHashMap<>();
         filters.put("user_id", query.userId());
         if (query.docType() != null && !query.docType().isBlank()) {

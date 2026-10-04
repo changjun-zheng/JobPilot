@@ -1,9 +1,14 @@
 package com.jobpilot.knowledge;
 
+import com.jobpilot.ai.AgentMessage;
+import com.jobpilot.ai.ChatCompletion;
 import com.jobpilot.ai.ChatPort;
+import com.jobpilot.ai.ChatRequest;
 import com.jobpilot.ai.RetrievalQuery;
 import com.jobpilot.ai.RetrievalResult;
 import com.jobpilot.ai.RetrievedChunk;
+import com.jobpilot.usage.UsageRecorder;
+import com.jobpilot.usage.UsageScenario;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -12,6 +17,10 @@ import java.util.List;
  * 引用问答（ARCHITECTURE.md §4.2 尾段 / PRD-FP-1.4）：
  * 检索 → 证据不足直接拒答（不强行走模型）→ 有证据则带引用约束生成回答。
  * 引用列表由服务端从命中 Chunk 组装，模型只负责正文，杜绝虚构文档名。
+ * <p>
+ * I-3c 起改走 {@link ChatPort#chat}（原 {@code complete} 已删）：用量计量需要
+ * {@link ChatCompletion#usage()}，String 返回值装不下。拒答路径不触碰模型，
+ * 因此也**不产生 LLM 计量行**——「没调用就没有消耗」是计量与计费共同的前提。
  */
 @Service
 public class RagAskService {
@@ -26,10 +35,13 @@ public class RagAskService {
 
     private final KnowledgeRetrievalService retrievalService;
     private final ChatPort chatPort;
+    private final UsageRecorder usageRecorder;
 
-    public RagAskService(KnowledgeRetrievalService retrievalService, ChatPort chatPort) {
+    public RagAskService(KnowledgeRetrievalService retrievalService, ChatPort chatPort,
+                         UsageRecorder usageRecorder) {
         this.retrievalService = retrievalService;
         this.chatPort = chatPort;
+        this.usageRecorder = usageRecorder;
     }
 
     public record AskAnswer(
@@ -41,7 +53,7 @@ public class RagAskService {
 
     public AskAnswer ask(String userId, String question, int topK, String docType) {
         RetrievalResult retrieval = retrievalService.search(
-                new RetrievalQuery(userId, question, topK, docType));
+                new RetrievalQuery(userId, question, topK, docType), UsageScenario.ASK);
         List<RetrievedChunk> evidence = retrieval.items();
         if (evidence.isEmpty()) {
             String answer = retrieval.degraded()
@@ -50,8 +62,12 @@ public class RagAskService {
             return new AskAnswer(answer, evidence, retrieval);
         }
         String userPrompt = buildPrompt(question, evidence);
-        String answer = chatPort.complete(SYSTEM_PROMPT, userPrompt);
-        return new AskAnswer(answer, evidence, retrieval);
+        ChatCompletion completion = chatPort.chat(new ChatRequest(
+                List.of(new AgentMessage.System(SYSTEM_PROMPT), new AgentMessage.User(userPrompt)),
+                List.of(), null, null, null, null));
+        usageRecorder.recordLlmCall(userId, UsageScenario.ASK, completion.model(),
+                completion.usage(), true, null);
+        return new AskAnswer(completion.content(), evidence, retrieval);
     }
 
     private String buildPrompt(String question, List<RetrievedChunk> evidence) {

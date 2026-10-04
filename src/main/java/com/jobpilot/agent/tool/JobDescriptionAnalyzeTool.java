@@ -11,6 +11,7 @@ import com.jobpilot.ai.ToolErrorCode;
 import com.jobpilot.ai.ToolExecutionContext;
 import com.jobpilot.ai.ToolExecutionResult;
 import com.jobpilot.knowledge.KnowledgeRetrievalService;
+import com.jobpilot.usage.UsageScenario;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -102,7 +103,7 @@ public class JobDescriptionAnalyzeTool implements AgentTool {
         List<RequirementEvidence> evidences = new ArrayList<>();
         for (String requirement : requirements) {
             RetrievalResult result = retrievalService.search(
-                    new RetrievalQuery(context.userId(), requirement, 3, null));
+                    new RetrievalQuery(context.userId(), requirement, 3, null), UsageScenario.AGENT);
             if (!result.items().isEmpty()) {
                 evidences.add(new RequirementEvidence(requirement, result.items()));
             }

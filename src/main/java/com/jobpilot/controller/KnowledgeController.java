@@ -11,6 +11,7 @@ import com.jobpilot.knowledge.IngestCommand;
 import com.jobpilot.knowledge.KnowledgeRetrievalService;
 import com.jobpilot.knowledge.RagAskService;
 import com.jobpilot.security.UserContext;
+import com.jobpilot.usage.UsageScenario;
 import jakarta.validation.constraints.NotBlank;
 import org.springframework.http.HttpStatus;
 import org.springframework.validation.annotation.Validated;
@@ -130,7 +131,7 @@ public class KnowledgeController {
     public ApiResponse<SearchResponse> search(@RequestBody @Validated SearchRequest request) {
         RetrievalResult result = retrievalService.search(new RetrievalQuery(
                 UserContext.require(), request.query(),
-                request.topK() == null ? 0 : request.topK(), request.docType()));
+                request.topK() == null ? 0 : request.topK(), request.docType()), UsageScenario.SEARCH);
         return ApiResponse.ok(SearchResponse.from(result));
     }
 

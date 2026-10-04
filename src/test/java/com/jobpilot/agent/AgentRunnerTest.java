@@ -12,6 +12,8 @@ import com.jobpilot.ai.ToolExecutionResult;
 import com.jobpilot.common.UnauthorizedException;
 import com.jobpilot.config.AgentProperties;
 import com.jobpilot.security.UserContext;
+import com.jobpilot.usage.UsageRecorder;
+import com.jobpilot.usage.UsageScenario;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -24,6 +26,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -38,6 +43,7 @@ class AgentRunnerTest {
     private ChatPort chatPort;
     private AgentToolRegistry registry;
     private AgentTraceRecorder traceRecorder;
+    private UsageRecorder usageRecorder;
     private AgentRunner runner;
 
     private static final String TENANT = "tenant-a";
@@ -47,6 +53,7 @@ class AgentRunnerTest {
         chatPort = mock(ChatPort.class);
         registry = new AgentToolRegistry(List.of());
         traceRecorder = mock(AgentTraceRecorder.class);
+        usageRecorder = mock(UsageRecorder.class);
         runner = newRunner(5, 8, 1);
         UserContext.set(TENANT);
     }
@@ -59,7 +66,7 @@ class AgentRunnerTest {
     private AgentRunner newRunner(int maxIterations, int maxToolCalls, int retry) {
         AgentProperties props = new AgentProperties(maxIterations, maxToolCalls,
                 Duration.ofSeconds(2), retry, null, 0.2, 1024, "local");
-        return new AgentRunner(chatPort, registry, traceRecorder, props);
+        return new AgentRunner(chatPort, registry, traceRecorder, usageRecorder, props);
     }
 
     // ── 终止条件 ────────────────────────────────────────────────
@@ -80,7 +87,7 @@ class AgentRunnerTest {
     void executesToolThenContinuesToFinalAnswer() {
         RecordingTool tool = new RecordingTool("knowledge_search", "搜到了证据");
         runner = newRunner(5, 8, 1);
-        runner = new AgentRunner(chatPort, new AgentToolRegistry(List.of(tool)), traceRecorder,
+        runner = new AgentRunner(chatPort, new AgentToolRegistry(List.of(tool)), traceRecorder, usageRecorder,
                 new AgentProperties(5, 8, Duration.ofSeconds(2), 1, null, 0.2, 1024, "local"));
         when(chatPort.chat(any()))
                 .thenReturn(toolCallCompletion("call-1", "knowledge_search", "{}"))
@@ -97,7 +104,7 @@ class AgentRunnerTest {
     @Test
     void stopsAtMaxIterationsWhenModelKeepsRequestingTools() {
         RecordingTool tool = new RecordingTool("loop", "还是调工具");
-        runner = new AgentRunner(chatPort, new AgentToolRegistry(List.of(tool)), traceRecorder,
+        runner = new AgentRunner(chatPort, new AgentToolRegistry(List.of(tool)), traceRecorder, usageRecorder,
                 new AgentProperties(3, 100, Duration.ofSeconds(2), 1, null, 0.2, 1024, "local"));
         when(chatPort.chat(any())).thenReturn(toolCallCompletion("c", "loop", "{}"));
 
@@ -111,7 +118,7 @@ class AgentRunnerTest {
     @Test
     void stopsWhenToolCallBudgetExhaustedAndSkipsTheRemainingTool() {
         RecordingTool tool = new RecordingTool("multi", "ok");
-        runner = new AgentRunner(chatPort, new AgentToolRegistry(List.of(tool)), traceRecorder,
+        runner = new AgentRunner(chatPort, new AgentToolRegistry(List.of(tool)), traceRecorder, usageRecorder,
                 new AgentProperties(10, 2, Duration.ofSeconds(2), 1, null, 0.2, 1024, "local"));
         // 模型一轮请求 3 个工具，但预算只有 2 → 第三个不得执行
         when(chatPort.chat(any())).thenReturn(new ChatCompletion("",
@@ -156,7 +163,7 @@ class AgentRunnerTest {
                 throw new IllegalStateException("数据库炸了");
             }
         };
-        runner = new AgentRunner(chatPort, new AgentToolRegistry(List.of(exploding)), traceRecorder,
+        runner = new AgentRunner(chatPort, new AgentToolRegistry(List.of(exploding)), traceRecorder, usageRecorder,
                 new AgentProperties(5, 8, Duration.ofSeconds(2), 1, null, 0.2, 1024, "local"));
         when(chatPort.chat(any()))
                 .thenReturn(toolCallCompletion("c1", "boom", "{}"))
@@ -204,6 +211,33 @@ class AgentRunnerTest {
         verify(chatPort, times(2)).chat(any());
     }
 
+    // ── 用量计量（I-3c，PRD-FP-10）──────────────────────────────
+
+    @Test
+    void recordsLlmUsagePerModelCallPlusOneAgentRunRow() {
+        when(chatPort.chat(any())).thenReturn(new ChatCompletion("直接回答", List.of(),
+                FinishReason.STOP, new com.jobpilot.ai.TokenUsage(3, 5), "test", "qwen2.5:3b"));
+
+        runner.run(new AgentRunner.RunRequest("conv-1", "你好"));
+
+        // 每次模型调用一行（tokens 透传供应商返回值），外加每 run 一行汇总
+        verify(usageRecorder).recordLlmCall(eq(TENANT), eq(UsageScenario.AGENT), eq("qwen2.5:3b"),
+                eq(new com.jobpilot.ai.TokenUsage(3, 5)), eq(true), anyString());
+        verify(usageRecorder).recordAgentRun(eq(TENANT), eq("qwen2.5:3b"), eq(1), eq(0), eq(true), anyString());
+    }
+
+    @Test
+    void failedModelCallRecordsFailedUsageRowWithoutTokens() {
+        when(chatPort.chat(any())).thenThrow(new IllegalStateException("Ollama 离线"));
+
+        runner.run(new AgentRunner.RunRequest("conv-1", "问一句"));
+
+        // 调用确实发生 → FAILED 行；消耗不可知 → usage 为 null（不得编 0）
+        verify(usageRecorder).recordLlmCall(eq(TENANT), eq(UsageScenario.AGENT),
+                isNull(), isNull(), eq(false), anyString());
+        verify(usageRecorder).recordAgentRun(eq(TENANT), isNull(), eq(1), eq(0), eq(false), anyString());
+    }
+
     // ── HITL：不在环上等（ARCHITECTURE §4.4）──────────────────
 
     @Test
@@ -235,7 +269,7 @@ class AgentRunnerTest {
                         java.util.Map.of("draftId", "draft-123"));
             }
         };
-        runner = new AgentRunner(chatPort, new AgentToolRegistry(List.of(approvalTool)), traceRecorder,
+        runner = new AgentRunner(chatPort, new AgentToolRegistry(List.of(approvalTool)), traceRecorder, usageRecorder,
                 new AgentProperties(5, 8, Duration.ofSeconds(2), 1, null, 0.2, 1024, "local"));
         when(chatPort.chat(any())).thenReturn(toolCallCompletion("c1", "save_it", "{}"));
 
@@ -262,7 +296,7 @@ class AgentRunnerTest {
     @Test
     void toolReceivesTenantFromContextNotFromArguments() {
         RecordingTool tool = new RecordingTool("echo", "ok");
-        runner = new AgentRunner(chatPort, new AgentToolRegistry(List.of(tool)), traceRecorder,
+        runner = new AgentRunner(chatPort, new AgentToolRegistry(List.of(tool)), traceRecorder, usageRecorder,
                 new AgentProperties(5, 8, Duration.ofSeconds(2), 1, null, 0.2, 1024, "local"));
         // 模型在参数里塞了一个 userId，runner 注入的仍必须是认证上下文的租户
         when(chatPort.chat(any()))

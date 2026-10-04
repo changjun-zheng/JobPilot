@@ -7,6 +7,9 @@ import com.jobpilot.ai.ChatRequest;
 import com.jobpilot.ai.FinishReason;
 import com.jobpilot.ai.ToolCall;
 import com.jobpilot.ai.ToolDefinition;
+import com.jobpilot.ai.TokenUsage;
+import org.springframework.ai.chat.metadata.ChatResponseMetadata;
+import org.springframework.ai.chat.metadata.EmptyUsage;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
@@ -47,14 +50,6 @@ public class OllamaChatAdapter implements ChatPort {
     }
 
     @Override
-    public String complete(String systemPrompt, String userPrompt) {
-        // 单一代码路径：单轮问答只是「不带工具的一次 chat」
-        return chat(new ChatRequest(
-                List.of(new AgentMessage.System(systemPrompt), new AgentMessage.User(userPrompt)),
-                List.of(), null, null, null, null)).content();
-    }
-
-    @Override
     public ChatCompletion chat(ChatRequest request) {
         var response = chatModel.call(new Prompt(toSpringMessages(request.messages()), toSpringOptions(request)));
         AssistantMessage output = response == null || response.getResult() == null
@@ -70,7 +65,28 @@ public class OllamaChatAdapter implements ChatPort {
         }
         return new ChatCompletion(content, toolCalls,
                 toolCalls.isEmpty() ? FinishReason.STOP : FinishReason.TOOL_CALLS,
-                null, "ollama", modelName());
+                toTokenUsage(response), "ollama", modelName());
+    }
+
+    /**
+     * Spring AI 的 Usage → 端口 record（FP-10 计量的数据来源，只有适配器摸得到它）。
+     * <p>
+     * <b>坑：供应商未返回用量时，Spring AI 给的不是 null 而是 {@link EmptyUsage} 占位（0/0）。</b>
+     * 不识别它就会把「没数据」记成「零消耗」——把不可用伪装成零，正是计量口径禁止的估算。
+     * 只有占位符映射为 NULL；供应商真实上报的数值（哪怕真的是 0）原样透传。
+     */
+    private TokenUsage toTokenUsage(org.springframework.ai.chat.model.ChatResponse response) {
+        var metadata = response.getMetadata();
+        if (metadata == null || metadata.getUsage() == null
+                || metadata.getUsage() instanceof EmptyUsage) {
+            return null;
+        }
+        Integer input = metadata.getUsage().getPromptTokens();
+        Integer output = metadata.getUsage().getCompletionTokens();
+        if (input == null && output == null) {
+            return null;
+        }
+        return new TokenUsage(input, output);
     }
 
     /**

@@ -13,6 +13,8 @@ import com.jobpilot.domain.KbDocumentEntity;
 import com.jobpilot.mapper.KbChunkMapper;
 import com.jobpilot.mapper.KbDocumentMapper;
 import com.jobpilot.security.UserContext;
+import com.jobpilot.usage.UsageRecorder;
+import com.jobpilot.usage.UsageScenario;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -49,6 +51,7 @@ public class DocumentIngestService {
     private final VectorStorePort vectorStore;
     private final RagProperties props;
     private final IngestProperties ingestProps;
+    private final UsageRecorder usageRecorder;
 
     public DocumentIngestService(KbDocumentMapper documentMapper,
                                  KbChunkMapper chunkMapper,
@@ -56,7 +59,8 @@ public class DocumentIngestService {
                                  EmbeddingPort embeddingPort,
                                  VectorStorePort vectorStore,
                                  RagProperties props,
-                                 IngestProperties ingestProps) {
+                                 IngestProperties ingestProps,
+                                 UsageRecorder usageRecorder) {
         this.documentMapper = documentMapper;
         this.chunkMapper = chunkMapper;
         this.chunkSplitter = chunkSplitter;
@@ -64,6 +68,7 @@ public class DocumentIngestService {
         this.vectorStore = vectorStore;
         this.props = props;
         this.ingestProps = ingestProps;
+        this.usageRecorder = usageRecorder;
     }
 
     /**
@@ -134,6 +139,10 @@ public class DocumentIngestService {
                     "process 只接受已认领（PROCESSING）的任务，收到：" + claimed.getStatus());
         }
 
+        // 嵌入消耗的累计器：嵌入调用发生在 try 内的任意一步都可能中断，
+        // 计数必须与方法同生命周期，失败路径才能如实记下「已经消耗掉的部分」
+        int embedCalls = 0;
+        int embedChars = 0;
         try {
             // 幂等清理（Chunk + 旧向量）放在 try 内：清理本身依赖向量库可用，失败同样走重试语义
             cleanupAttempt(claimed);
@@ -147,23 +156,30 @@ public class DocumentIngestService {
                 throw new IllegalArgumentException("提取文本为空，无可索引 Chunk");
             }
             for (ChunkPart part : parts) {
-                indexChunk(claimed, part);
+                List<Double> vector = embeddingPort.embed(part.text());
+                // 嵌入成功即为真实消耗，立刻累计（后续 upsert 失败也不会漏记这一条）
+                embedCalls++;
+                embedChars += part.text().codePointCount(0, part.text().length());
+                indexChunk(claimed, part, vector);
             }
             claimed.setStatus("READY");
             claimed.setChunkCount(parts.size());
             claimed.setErrorMessage(null);
             claimed.setNextRetryAt(null);
+            usageRecorder.recordEmbedding(claimed.getUserId(), UsageScenario.INGEST,
+                    props.embeddingModel(), embedChars, embedCalls, true, claimed.getId());
             updateGuardedByProcessing(claimed);
             log.info("文档索引完成 documentId={} chunks={}", claimed.getId(), parts.size());
         } catch (IllegalArgumentException e) {
-            failPermanently(claimed, e);
+            failPermanently(claimed, e, embedCalls, embedChars);
         } catch (Exception e) {
-            requeueOrFail(claimed, e);
+            requeueOrFail(claimed, e, embedCalls, embedChars);
         }
     }
 
-    private void failPermanently(KbDocumentEntity claimed, Exception e) {
+    private void failPermanently(KbDocumentEntity claimed, Exception e, int embedCalls, int embedChars) {
         log.warn("文档索引失败（确定性错误，不重试）documentId={}", claimed.getId(), e);
+        recordPartialEmbedding(claimed, embedCalls, embedChars);
         claimed.setStatus("FAILED");
         claimed.setErrorMessage(truncate(e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
         claimed.setNextRetryAt(null);
@@ -171,7 +187,8 @@ public class DocumentIngestService {
         updateGuardedByProcessing(claimed);
     }
 
-    private void requeueOrFail(KbDocumentEntity claimed, Exception e) {
+    private void requeueOrFail(KbDocumentEntity claimed, Exception e, int embedCalls, int embedChars) {
+        recordPartialEmbedding(claimed, embedCalls, embedChars);
         String reason = truncate(e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
         int retried = claimed.getRetryCount() == null ? 1 : claimed.getRetryCount() + 1;
         if (retried > ingestProps.maxRetries()) {
@@ -221,10 +238,16 @@ public class DocumentIngestService {
         }
     }
 
-    private void indexChunk(KbDocumentEntity doc, ChunkPart part) {
-        String vectorId = doc.getId() + "#" + part.seq() + "#" + doc.getIndexVersion();
+    /** 部分成功的嵌入同样是真实消耗：失败/重排路径只要有已发生的调用，就如实记一行 FAILED + 已消耗的量 */
+    private void recordPartialEmbedding(KbDocumentEntity claimed, int embedCalls, int embedChars) {
+        if (embedCalls > 0) {
+            usageRecorder.recordEmbedding(claimed.getUserId(), UsageScenario.INGEST,
+                    props.embeddingModel(), embedChars, embedCalls, false, claimed.getId());
+        }
+    }
 
-        List<Double> vector = embeddingPort.embed(part.text());
+    private void indexChunk(KbDocumentEntity doc, ChunkPart part, List<Double> vector) {
+        String vectorId = doc.getId() + "#" + part.seq() + "#" + doc.getIndexVersion();
 
         // 1.先写 Chroma（upsert 幂等：同 vector_id 重复执行是覆盖而非新增）
         vectorStore.upsert(vectorId, vector, Map.of(
