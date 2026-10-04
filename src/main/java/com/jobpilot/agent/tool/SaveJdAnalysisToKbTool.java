@@ -13,6 +13,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
@@ -102,10 +103,17 @@ public class SaveJdAnalysisToKbTool implements AgentTool {
     /**
      * 组装审批载荷。用 Jackson 而不是手工拼 JSON 字符串：
      * 手工转义漏一个字符就是载荷被截断或字段错位，而 content 完全由模型给出。
+     * <p>
+     * 用 {@link LinkedHashMap} 而非 {@code Map.of}：草稿的幂等键是
+     * {@code sha256(...|payloadJson)}，而 {@code Map.of} 的迭代顺序**每次 JVM 启动随机**，
+     * 同一逻辑载荷会算出不同字符串，跨重启去重就静默失效——不报错，只是不再去重。
      */
     private String payloadJson(String documentName, String content) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("name", documentName);
+        payload.put("content", content);
         try {
-            return mapper.writeValueAsString(Map.of("name", documentName, "content", content));
+            return mapper.writeValueAsString(payload);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("组装审批载荷失败", e);
         }
