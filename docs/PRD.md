@@ -832,7 +832,7 @@ FP-7 / FP-8 / FP-11（投递完整体验、简历要点生成、订阅计费）�
 11. **用量计量口径**：字符数 / token 数的取舍，供应商未返回用量时的处理，计量的幂等与补偿。**2026-10-04 已决（随 I-3c 落地，详见 `UsageRecorder` 口径注释与 ROADMAP §6.9）**：Embedding 记码点字符数（嵌入供应商不返回 token，字符数是唯一拿得到且不撒谎的量）；token 未返回记 NULL 不记 0，Spring AI 的 `EmptyUsage` 占位（0/0）须识别为不可用，汇总侧用 `tokenUnavailable` 显式暴露缺口；计量行独立事务（REQUIRES_NEW），业务回滚不撤销已发生的消耗；失败的模型调用仅 Agent 最终失败处记 FAILED 行。「预留-结算」的幂等与补偿随 I-5 配额一起做。
 12. SSE 断线恢复、重复事件和已生成内容的持久化策略。
 13. trace 与安全日志中输入/输出的脱敏规则和日志保留周期。
-14. 前端具体技术栈；BRD 建议 Vue 3 + Element Plus，但不作为本 PRD 的实现硬约束。
+14. 前端具体技术栈；BRD 建议 Vue 3 + Element Plus，但不作为本 PRD 的实现硬约束。**2026-10-06 已决（I-4）**：**Vue 3 + Vite + TypeScript + Element Plus**，独立 `frontend/` 单页应用，dev 用 Vite 代理直连后端 `/api/v1`、build 出静态资源。理由：与参考项目（hm-dianping / sky-take-out）同栈、组件与中文文档最齐、对后端出身摩擦最小；TypeScript 让投递/记忆/文档/用量这些多字段接口不易写错。**SSE 不在本期**（I-5），对话页先保证同步回答可用。
 
 > 「Spring AI 是否能减少 Chat/Embedding/Tool Calling 适配代码」已由 I-0 落地回答：能，且业务层 Port 隔离未破。
 

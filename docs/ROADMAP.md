@@ -2,10 +2,10 @@
 
 | 项 | 内容 |
 |---|---|
-| 最后更新 | 2026-10-04 |
-| 当前迭代 | **I-3 已完成（I-3a 投递记录、I-3b 长期记忆、I-3c 用量计量·可归集）；下一步 I-4 产品化外壳** |
+| 最后更新 | 2026-10-06 |
+| 当前迭代 | **I-4 进行中：后端前置（Conversation/Message 持久化）已完成，四个页面未开始** |
 | 已完成 | I-0、I-1、I-2、I-3 |
-| 最近验证 | 209 个测试通过（含计量端到端：码点字符数、拒答无 LLM 行、agent run 汇总、汇总跨租户隔离）；`check-arch.sh` 全部通过 |
+| 最近验证 | 229 个测试通过（含会话持久化：两条有序消息、次轮回填上下文、跨租户读/删 404）；`check-arch.sh` 全部通过 |
 
 > **本文件是「进度状态」的唯一事实来源。**
 > BRD / PRD / ARCHITECTURE 只回答「要做什么」和「为什么这么做」，**不记录做到哪一步**。
@@ -161,7 +161,7 @@
 ### 5.4 明确不做（留给后续）
 
 - [ ] **本地/云端双路径的云端适配器** —— 接缝已留（`ChatPort` 无路径分支、`provider-path` 只允许出现在 Bean 装配处）；云端 provider 与用量计量属 I-3/I-5
-- [ ] **跨 run 会话记忆** —— `conversationId` 本轮仅作关联标识，ReAct 历史是 per-run 的；随 I-3 的 Memory 一起做（用无淘汰的内存 Map 更糟，不如明说限制）
+- [x] **跨 run 会话记忆** —— I-4 前置已落地（会话/消息落库 + `AgentChatService` 回填历史，见 §7）；原记「随 I-3 的 Memory 一起做」改为随 I-4 做
 - [ ] **`application_*` 工具与投递 CRUD** —— 表还不存在，不造空表
 - [ ] **`EXPIRED` 审批状态** —— PRD 列了它，但需要调度器；`PENDING` 长期堆积是已知的小风险
 - [ ] 多 Agent、并行工具、SSE
@@ -250,7 +250,7 @@ I-3 实际是四块互不依赖的工作，一次做完会产出低质量代码�
 ### 6.8 段间遗留
 
 - `domain/DocumentStatus` 是「声明了但无人引用」的死枚举（`KbDocumentEntity.status` 实际是 `String`）。修它要动导入状态机，**未修**。
-- I-2 的两处遗留仍未做：Conversation/Message 持久化、本地/云端双路径的云端适配器。
+- I-2 的两处遗留：**Conversation/Message 持久化已于 I-4 前置完成**（见 §7）；本地/云端双路径的云端适配器仍未做。
 
 ### 6.9 I-3c 已完成项（用量计量·第一阶段「可归集」）
 
@@ -268,7 +268,27 @@ I-3 实际是四块互不依赖的工作，一次做完会产出低质量代码�
 
 ---
 
-## 7. 已知缺陷（I-1 需一并修复）
+## 7. I-4 · 产品化外壳（进行中）
+
+**状态：** `[~]` **后端前置（会话持久化）已完成**（2026-10-06）；四个页面（注册登录 / 对话 / 知识库管理 / 账号设置）未开始。前端栈已定：**Vue 3 + Vite + TypeScript + Element Plus**（PRD §12.14 已决，独立 `frontend/` SPA）。
+
+### 7.1 已完成：Conversation / Message 持久化
+
+- [x] **表 `conversation` / `conversation_message`**（V9）—— 只存 **USER / ASSISTANT** 文本；助手行带 `steps_json`（工具步骤摘要）与 `trace_id`（可回放 `agent_trace`）。工具调用细节留在 `agent_trace_step`，本表不重复。索引以 `user_id` 开头（拦截器会前置它）；不加外键
+- [x] **`AgentChatService` 编排层**（`agent` 包）—— 「读历史 → run → 落消息」。**不加 `@Transactional`**：中间是数十秒的 LLM 调用，包进事务会长时间占用连接，并破坏 `AgentTraceRecorder` 的 `REQUIRES_NEW` 语义。**会话创建 + 用户消息在 `run` 之前各自提交**，run 内产生的审批草稿才挂得住
+- [x] **跨 run 上下文** —— `AgentRunner.RunRequest.priorMessages`（协议消息，runner 仍不知道表结构）；历史装配为 `[System] + prior + [User]`。`compactIfTooLong` 修为**保留 System**（旧实现取「最近 N 条」会把 System 一起截掉）；`MAX_CONTEXT_MESSAGES` 40→60，加载侧另限最近 24 条
+- [x] **会话 id 契约收紧** —— 首轮 `/agent/run` **不带** `conversationId`（服务端新建并返回），之后必须回传且属本租户，否则 404。修掉了「客户端传的 id 完全不校验」这一缺口（此前任意字符串都会写进 trace / 草稿）
+- [x] **API `GET /api/v1/conversations`、`GET /{id}`（含消息）、`DELETE /{id}`** —— 无 POST（会话在首轮 run 落库）；无重命名
+
+**失败策略（有意不对称）**：会话创建 / 用户消息 **fail-loud**；助手消息 **best-effort**（模型已答完，不因记账插入失败丢答案）；**`ERROR` 终态不写助手消息**（罐头错误话不算助手的真实回答）。
+
+**验证证据**：`ConversationServiceTest` 8 例（派生 title 按码点截断 / 租户一致性 / 先查后删 / 倒序翻正）；`AgentChatServiceTest` 4 例（编排顺序 / ERROR 不写助手行 / prior 映射）；`AgentRunnerTest` +2 例（prior 拼接位置 / compact 保留 System）；`AgentChatServiceIntegrationTest` 4 例（真实 MySQL：两条有序消息 / **次轮把上轮回填给模型** / 未知 id 404 / 删级联）；`ConversationTenantIsolationIntegrationTest` 2 例（跨租户读/删 404、列表互不可见）。全量 **229 通过**；`check-arch.sh` 六条全过。
+
+> **踩坑记录**：改 V5 迁移的注释导致 Flyway 校验和不匹配、整套集成测试起不来——**已应用的迁移不可再改**。注释修正改由 V9 头注释与 ARCHITECTURE §4.3 承载。
+
+---
+
+## 8. 已知缺陷（I-1 需一并修复）
 
 | 缺陷 | 影响 | 位置 |
 |---|---|---|
@@ -281,7 +301,7 @@ I-3 实际是四块互不依赖的工作，一次做完会产出低质量代码�
 
 ---
 
-## 8. 更新约定
+## 9. 更新约定
 
 1. **只在本文件勾选进度**。BRD / PRD / ARCHITECTURE 不记录状态，避免多处漂移；
 2. 迭代**完成时**才更新第 1 节总览表的「状态」列，进行中不改；

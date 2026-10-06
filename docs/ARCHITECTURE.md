@@ -641,6 +641,8 @@ user message + UserContext.userId
 
 AgentRunner 只负责循环和预算，不知道 `Document`、`Application` 或 `Memory` 的表结构。具体工具由 JobPilot 应用服务提供，例如 `knowledge_search`、`job_description_analyze` 和 `application_query`。
 
+**会话持久化的编排在 `AgentChatService`（I-4）**：它读会话历史 → 调 `AgentRunner` → 落用户/助手消息。runner 本身仍不知道任何表——跨 run 上下文以 `RunRequest.priorMessages`（协议消息列表）注入。该编排层**不加事务**：中间是一次数十秒的 LLM 调用，包进事务会长时间占用连接，并破坏 `AgentTraceRecorder` 的 `REQUIRES_NEW` 语义。
+
 **工具不得从模型参数读取租户标识**：`userId` 由 runner 通过 `ToolExecutionContext` 注入，每个工具入口自行校验（参考 `PaiSmart` 的 `requireUserId`，§2.2）。模型输出是不可信输入，不能作为越权入口。
 
 ### 4.4 HITL 副作用（I-2，规划）
