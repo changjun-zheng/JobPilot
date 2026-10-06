@@ -44,6 +44,10 @@ public class DocumentIngestService {
 
     private static final Logger log = LoggerFactory.getLogger(DocumentIngestService.class);
 
+    /** 列表一次返回上限；无分页拦截器，用 LIMIT 钳制（同 ApplicationService.query） */
+    private static final int DEFAULT_LIST_LIMIT = 50;
+    private static final int MAX_LIST_LIMIT = 200;
+
     private final KbDocumentMapper documentMapper;
     private final KbChunkMapper chunkMapper;
     private final ChunkSplitter chunkSplitter;
@@ -105,6 +109,45 @@ public class DocumentIngestService {
             throw new com.jobpilot.common.ApiException(com.jobpilot.common.ErrorCode.NOT_FOUND, "文档不存在：" + id);
         }
         return doc;
+    }
+
+    /**
+     * 文档列表（PRD-FP-6 知识库页）：{@code status} 为空表示全部，按导入时间倒序。
+     * 租户条件由拦截器注入；{@code content} 列 {@code select=false}，列表不拖大字段。
+     */
+    public List<KbDocumentEntity> list(String status, int limit) {
+        QueryWrapper<KbDocumentEntity> wrapper = new QueryWrapper<>();
+        if (status != null && !status.isBlank()) {
+            wrapper.eq("status", status.strip().toUpperCase());
+        }
+        wrapper.orderByDesc("created_at");
+        wrapper.last("LIMIT " + clampListLimit(limit));
+        return documentMapper.selectList(wrapper);
+    }
+
+    /**
+     * 删除文档（PRD-FP-6）：覆盖**向量库 + Chunk + 文档行**三处（NFR-6 删除一致性）。
+     * <p>
+     * 向量清理**尽力而为**（与 {@link #bestEffortCleanup} 同一取舍）：残留向量由「检索只读 MySQL Chunk」
+     * 兜底——文档行与 Chunk 都没了，向量**永远不会被召回**。不因向量库临时不可达就让用户删不掉自己的数据。
+     * 反过来说，先删 Chunk、再删文档行，每步幂等，中途失败可重试。
+     */
+    public void delete(String documentId) {
+        document(documentId); // 404 语义（含租户隔离）先行
+        try {
+            vectorStore.deleteByDocumentId(documentId);
+        } catch (RuntimeException e) {
+            log.warn("删除文档时向量清理失败（残留不可召回，可由后续清理）documentId={}", documentId, e);
+        }
+        chunkMapper.delete(new QueryWrapper<KbChunkEntity>().eq("document_id", documentId));
+        documentMapper.deleteById(documentId);
+    }
+
+    private int clampListLimit(int limit) {
+        if (limit <= 0) {
+            return DEFAULT_LIST_LIMIT;
+        }
+        return Math.min(limit, MAX_LIST_LIMIT);
     }
 
     /**

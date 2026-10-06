@@ -15,14 +15,17 @@ import com.jobpilot.usage.UsageScenario;
 import jakarta.validation.constraints.NotBlank;
 import org.springframework.http.HttpStatus;
 import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -93,11 +96,13 @@ public class KnowledgeController {
     }
 
     public record DocumentResponse(String id, String name, String docType, String status,
-                                   Integer indexVersion, Integer chunkCount, String errorMessage) {
+                                   Integer indexVersion, Integer chunkCount, String errorMessage,
+                                   LocalDateTime createdAt) {
 
         static DocumentResponse from(KbDocumentEntity doc) {
             return new DocumentResponse(doc.getId(), doc.getName(), doc.getDocType(),
-                    doc.getStatus(), doc.getIndexVersion(), doc.getChunkCount(), doc.getErrorMessage());
+                    doc.getStatus(), doc.getIndexVersion(), doc.getChunkCount(),
+                    doc.getErrorMessage(), doc.getCreatedAt());
         }
     }
 
@@ -120,10 +125,26 @@ public class KnowledgeController {
         return ApiResponse.ok(DocumentResponse.from(ingestService.reindex(id)));
     }
 
+    /** 文档列表（PRD-FP-6 知识库页）：status 可选，按导入时间倒序 */
+    @GetMapping("/documents")
+    public ApiResponse<List<DocumentResponse>> documents(
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false, defaultValue = "0") int limit) {
+        return ApiResponse.ok(ingestService.list(status, limit).stream()
+                .map(DocumentResponse::from).toList());
+    }
+
     /** 索引状态查询（PRD：导入成功只代表任务创建，状态必须可查） */
     @GetMapping("/documents/{id}")
     public ApiResponse<DocumentResponse> document(@PathVariable String id) {
         return ApiResponse.ok(DocumentResponse.from(ingestService.document(id)));
+    }
+
+    /** 删除文档：级联删除向量与 Chunk（NFR-6 删除一致性）；跨租户与不存在均 404 */
+    @DeleteMapping("/documents/{id}")
+    public ApiResponse<Void> delete(@PathVariable String id) {
+        ingestService.delete(id);
+        return ApiResponse.ok(null);
     }
 
     /** 纯检索（不带生成），降级信息透传 */

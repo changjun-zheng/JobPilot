@@ -29,6 +29,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -221,6 +222,56 @@ class DocumentIngestServiceTest {
         assertThatThrownBy(() -> service.reindex("doc-test"))
                 .isInstanceOf(com.jobpilot.common.ApiException.class)
                 .hasMessageContaining("无法重排");
+    }
+
+    // ── 列表与删除（I-4 知识库页）─────────────────────────────
+
+    @Test
+    void listReturnsMapperResult() {
+        when(documentMapper.selectList(any(Wrapper.class))).thenReturn(List.of(document("doc-1")));
+
+        assertThat(service.list(null, 10)).extracting(KbDocumentEntity::getId).containsExactly("doc-1");
+    }
+
+    @Test
+    void deleteRemovesVectorsThenChunksThenDocumentRow() {
+        when(documentMapper.selectById("doc-1")).thenReturn(document("doc-1"));
+
+        service.delete("doc-1");
+
+        org.mockito.InOrder order = inOrder(vectorStore, chunkMapper, documentMapper);
+        order.verify(vectorStore).deleteByDocumentId("doc-1");
+        order.verify(chunkMapper).delete(any(Wrapper.class));
+        order.verify(documentMapper).deleteById("doc-1");
+    }
+
+    @Test
+    void deleteStillSucceedsWhenVectorCleanupFails() {
+        when(documentMapper.selectById("doc-1")).thenReturn(document("doc-1"));
+        doThrow(new RuntimeException("Chroma down")).when(vectorStore).deleteByDocumentId("doc-1");
+
+        service.delete("doc-1"); // 向量清理尽力而为，不因向量库不可达就让用户删不掉
+
+        // 残留向量不可召回（检索只读 MySQL Chunk），Chunk 与文档行照删
+        verify(chunkMapper).delete(any(Wrapper.class));
+        verify(documentMapper).deleteById("doc-1");
+    }
+
+    @Test
+    void deleteOnMissingDocumentIsNotFoundAndTouchesNothing() {
+        when(documentMapper.selectById("ghost")).thenReturn(null);
+
+        assertThatThrownBy(() -> service.delete("ghost"))
+                .isInstanceOf(com.jobpilot.common.ApiException.class)
+                .hasMessageContaining("文档不存在");
+        verify(vectorStore, never()).deleteByDocumentId(anyString());
+    }
+
+    private KbDocumentEntity document(String id) {
+        KbDocumentEntity doc = new KbDocumentEntity();
+        doc.setId(id);
+        doc.setUserId("u1");
+        return doc;
     }
 
     private KbDocumentEntity claimedTask(int retryCount, String content) {
