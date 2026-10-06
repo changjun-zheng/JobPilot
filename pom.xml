@@ -150,6 +150,31 @@
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
             </plugin>
+            <!--
+              自动配置 pre-commit hook：每次 mvn 命令在 initialize 阶段执行
+              git config core.hooksPath scripts/git-hooks，消除每个 clone
+              手动配置的步骤。仅在 .git 目录存在时生效（不影响打包后的环境）。
+            -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.5.1</version>
+                <executions>
+                    <execution>
+                        <id>install-git-hooks</id>
+                        <phase>initialize</phase>
+                        <goals><goal>exec</goal></goals>
+                        <configuration>
+                            <executable>git</executable>
+                            <arguments>
+                                <argument>config</argument>
+                                <argument>core.hooksPath</argument>
+                                <argument>scripts/git-hooks</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
     </build>
 </project>

@@ -18,7 +18,14 @@ ONLY="${1:-}"
 FAILED=0
 
 RG="$(command -v rg 2>/dev/null || true)"
+# Windows bash（Git Bash / MSYS2）下 command -v 找不到 .exe，手动查一下
+if [ -z "$RG" ] && command -v where.exe >/dev/null 2>&1; then
+  RG="$(where.exe rg 2>/dev/null | head -1 | tr -d '\r')"
+fi
 AG="$(command -v ast-grep 2>/dev/null || true)"
+if [ -z "$AG" ] && command -v where.exe >/dev/null 2>&1; then
+  AG="$(where.exe ast-grep 2>/dev/null | head -1 | tr -d '\r')"
+fi
 
 if [ -z "$RG" ]; then
   # Linux / CI 上没有 winget，装一下再继续：缺工具而静默跳过架构检查，

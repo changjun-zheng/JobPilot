@@ -44,8 +44,8 @@ desktop.ini
 .zcode/
 .firecrawl/
 
-# Qoder 项目级技能（含个人学习偏好与本地绝对路径，不入库）
-.qoder/skills/
+# Qoder 工具产物（技能含个人学习偏好与本地绝对路径；better-harness / repowiki 为工具输出，均不入库）
+.qoder/
 
 # Local data (向量库 / 索引 / 上传文件)
 data/

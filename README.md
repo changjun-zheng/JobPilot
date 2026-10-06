@@ -65,7 +65,7 @@ RAG 链路需要 **MySQL**（Flyway 建表）、**Ollama**（`bge-m3` 嵌入 + `
 
 `scripts/check-arch.sh` 把 AGENTS.md 里的架构约束变成可执行检查：Spring AI 类型是否越出 `ai/adapter`、是否引入被禁的参考项目依赖或 Elasticsearch、是否 `printStackTrace`、是否裸 `new Thread`。
 
-仓库带了配套的 pre-commit hook，但 `core.hooksPath` 是**本地 git 配置、不在版本控制里**，所以每个 clone 要手动启用一次：
+仓库带了配套的 pre-commit hook。Maven 构建时会自动配置 `core.hooksPath` 指向 `scripts/git-hooks/`（pom.xml `initialize` 阶段），首次 clone 后跑一次 `mvn compile` 或 `mvn test` 即可让 hook 生效，无需手动配置。如果还没跑过 Maven 就想提交，可以手动启用：
 
 ```bash
 git config core.hooksPath scripts/git-hooks
