@@ -1,5 +1,6 @@
 package com.jobpilot.controller;
 
+import com.jobpilot.agent.AgentChatService;
 import com.jobpilot.agent.AgentRunner;
 import com.jobpilot.agent.ApprovalDraftService;
 import com.jobpilot.agent.ApprovalExecutionService;
@@ -40,16 +41,16 @@ public class AgentController {
     /** 批量记忆候选工具名；决定审批是否需要候选清单与部分选择语义 */
     private static final String TOOL_MEMORY_CANDIDATE = "memory_candidate_create";
 
-    private final AgentRunner agentRunner;
+    private final AgentChatService agentChatService;
     private final ApprovalExecutionService approvalExecutionService;
     private final ApprovalDraftService approvalDraftService;
     private final MemoryService memoryService;
 
-    public AgentController(AgentRunner agentRunner,
+    public AgentController(AgentChatService agentChatService,
                            ApprovalExecutionService approvalExecutionService,
                            ApprovalDraftService approvalDraftService,
                            MemoryService memoryService) {
-        this.agentRunner = agentRunner;
+        this.agentChatService = agentChatService;
         this.approvalExecutionService = approvalExecutionService;
         this.approvalDraftService = approvalDraftService;
         this.memoryService = memoryService;
@@ -125,11 +126,11 @@ public class AgentController {
     public record ApproveRequest(List<String> selectedCandidateIds) {
     }
 
-    /** 发起一次 Agent 对话；模型自行决定是否调用工具 */
+    /** 发起一次 Agent 对话；模型自行决定是否调用工具。会话持久化在 AgentChatService 内编排 */
     @PostMapping("/run")
     public ApiResponse<RunResponse> run(@RequestBody @Validated RunRequest request) {
         return ApiResponse.ok(RunResponse.from(
-                agentRunner.run(new AgentRunner.RunRequest(request.conversationId(), request.message()))));
+                agentChatService.chat(request.conversationId(), request.message())));
     }
 
     /**

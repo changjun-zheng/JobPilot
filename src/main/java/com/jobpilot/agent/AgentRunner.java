@@ -58,8 +58,11 @@ public class AgentRunner {
      * <p>
      * 本期不做自动摘要（PRD-FP-2.1 允许明确截断并记录），但<b>截断必须可见</b>——
      * 静默丢掉中间轮次会让模型「忘记」自己已经查过什么，然后重复调用同一个工具。
+     * <p>
+     * 上调到 60 是为了给跨 run 回填的历史留空间（{@code AgentChatService} 在加载侧已限到
+     * {@code PRIOR_MESSAGE_LIMIT} 条，这里的兜底截断因此极少触发）。
      */
-    private static final int MAX_CONTEXT_MESSAGES = 40;
+    private static final int MAX_CONTEXT_MESSAGES = 60;
 
     private final ChatPort chatPort;
     private final AgentToolRegistry toolRegistry;
@@ -84,8 +87,24 @@ public class AgentRunner {
                 new CustomizableThreadFactory("agent-llm-"));
     }
 
-    /** 一次 run 的输入；{@code conversationId} 为空时新建 */
-    public record RunRequest(String conversationId, String userMessage) {
+    /**
+     * 一次 run 的输入。
+     *
+     * @param conversationId 会话标识；为空时本方法会现造一个（直接调用 runner 的场景）
+     * @param userMessage    本轮用户输入
+     * @param priorMessages  跨 run 回填的历史（USER / ASSISTANT 文本，按时间升序）；由
+     *                       {@code AgentChatService} 从会话表读出，runner 自身不知道表结构
+     */
+    public record RunRequest(String conversationId, String userMessage, List<AgentMessage> priorMessages) {
+
+        /** 不带历史的便捷构造器：保留它是为了让直连 runner 的调用点与测试一行不改 */
+        public RunRequest(String conversationId, String userMessage) {
+            this(conversationId, userMessage, List.of());
+        }
+
+        public RunRequest {
+            priorMessages = priorMessages == null ? List.of() : List.copyOf(priorMessages);
+        }
     }
 
     /**
@@ -148,9 +167,12 @@ public class AgentRunner {
                 ? UUID.randomUUID().toString()
                 : request.conversationId();
 
-        List<AgentMessage> history = new ArrayList<>(List.of(
-                new AgentMessage.System(SYSTEM_PROMPT),
-                new AgentMessage.User(request.userMessage())));
+        // 历史 = System + 跨 run 回填的历史 + 本轮用户输入。
+        // System 恒在首位：它是行为约束，任何截断都不得丢（见 compactIfTooLong）
+        List<AgentMessage> history = new ArrayList<>();
+        history.add(new AgentMessage.System(SYSTEM_PROMPT));
+        history.addAll(request.priorMessages());
+        history.add(new AgentMessage.User(request.userMessage()));
         List<Step> steps = new ArrayList<>();
         List<String> draftIds = new ArrayList<>();
         int iterations = 0;
@@ -323,10 +345,18 @@ public class AgentRunner {
         if (history.size() <= MAX_CONTEXT_MESSAGES) {
             return history;
         }
-        log.warn("Agent 上下文超长（{} 条），截断到最近 {} 条", history.size(), MAX_CONTEXT_MESSAGES);
+        log.warn("Agent 上下文超长（{} 条），截断到首条 System + 最近 {} 条",
+                history.size(), MAX_CONTEXT_MESSAGES - 1);
         traceRecorder.step(traceId, userId, iteration, "system", "context-compaction", "ok", 0,
                 "上下文由 " + history.size() + " 条截断至 " + MAX_CONTEXT_MESSAGES + " 条", null, null);
-        return new ArrayList<>(history.subList(history.size() - MAX_CONTEXT_MESSAGES, history.size()));
+        // 保留首条 System：它是全部行为约束（必须先调工具、不许编造…），丢了模型就失去规则。
+        // （旧实现直接取「最近 N 条」，会把 System 一起截掉——history 从 [System, …] 起，最近 N 条不含它。）
+        List<AgentMessage> compacted = new ArrayList<>(MAX_CONTEXT_MESSAGES);
+        if (!history.isEmpty()) {
+            compacted.add(history.get(0));
+        }
+        compacted.addAll(history.subList(history.size() - (MAX_CONTEXT_MESSAGES - 1), history.size()));
+        return compacted;
     }
 
     /**

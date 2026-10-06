@@ -17,6 +17,7 @@ import com.jobpilot.usage.UsageScenario;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -306,6 +307,45 @@ class AgentRunnerTest {
         runner.run(new AgentRunner.RunRequest("conv-1", "带伪造参数"));
 
         assertThat(tool.lastContext.userId()).isEqualTo(TENANT);
+    }
+
+    // ── 跨 run 上下文（I-4）─────────────────────────────────────
+
+    @Test
+    void priorMessagesAreSplicedBetweenSystemAndCurrentUserMessage() {
+        when(chatPort.chat(any())).thenReturn(completion("答", List.of()));
+
+        List<AgentMessage> prior = List.of(
+                new AgentMessage.User("上一轮的问题"),
+                new AgentMessage.Assistant("上一轮的回答", List.of()));
+        runner.run(new AgentRunner.RunRequest("conv-1", "这一轮的问题", prior));
+
+        ArgumentCaptor<ChatRequest> captor = ArgumentCaptor.forClass(ChatRequest.class);
+        verify(chatPort).chat(captor.capture());
+        List<AgentMessage> sent = captor.getValue().messages();
+        assertThat(sent).hasSize(4);
+        assertThat(sent.get(0)).isInstanceOf(AgentMessage.System.class);
+        assertThat(sent.get(1).text()).isEqualTo("上一轮的问题");
+        assertThat(sent.get(2).text()).isEqualTo("上一轮的回答");
+        assertThat(sent.get(3)).isInstanceOf(AgentMessage.User.class);
+        assertThat(sent.get(3).text()).isEqualTo("这一轮的问题");
+    }
+
+    @Test
+    void contextCompactionKeepsTheSystemMessage() {
+        RecordingTool tool = new RecordingTool("loop", "ok");
+        runner = new AgentRunner(chatPort, new AgentToolRegistry(List.of(tool)), traceRecorder, usageRecorder,
+                new AgentProperties(40, 100, Duration.ofSeconds(2), 1, null, 0.2, 1024, "local"));
+        when(chatPort.chat(any())).thenReturn(toolCallCompletion("c", "loop", "{}"));
+
+        runner.run(new AgentRunner.RunRequest("conv-1", "循环"));
+
+        ArgumentCaptor<ChatRequest> captor = ArgumentCaptor.forClass(ChatRequest.class);
+        verify(chatPort, org.mockito.Mockito.atLeast(2)).chat(captor.capture());
+        ChatRequest last = captor.getAllValues().get(captor.getAllValues().size() - 1);
+        // 旧实现取「最近 N 条」会把 System 一起截掉，模型随即失去全部行为约束
+        assertThat(last.messages().get(0)).isInstanceOf(AgentMessage.System.class);
+        assertThat(last.messages().size()).isLessThanOrEqualTo(60);
     }
 
     // ── helpers ────────────────────────────────────────────────

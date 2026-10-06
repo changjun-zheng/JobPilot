@@ -93,6 +93,8 @@ public abstract class MySqlIntegrationTestBase {
              Statement statement = connection.createStatement()) {
             statement.execute("SET FOREIGN_KEY_CHECKS = 0");
             statement.execute("DROP TABLE IF EXISTS usage_record");
+            statement.execute("DROP TABLE IF EXISTS conversation_message");
+            statement.execute("DROP TABLE IF EXISTS conversation");
             statement.execute("DROP TABLE IF EXISTS user_memory");
             statement.execute("DROP TABLE IF EXISTS job_application");
             statement.execute("DROP TABLE IF EXISTS agent_approval_draft");
