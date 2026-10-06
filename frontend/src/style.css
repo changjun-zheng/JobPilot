@@ -1,0 +1,20 @@
+:root {
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: "Segoe UI", "Microsoft YaHei", -apple-system, sans-serif;
+  color: #1f2430;
+  background: #f6f7fb;
+}
