@@ -214,6 +214,39 @@
     </ul>
   </section>
 
+  <!-- 面试模拟官 -->
+  <section>
+    <div class="sec-head">
+      <h2>面试模拟官（BRD US-3）</h2>
+      <span class="badge done">✅ 已完成</span>
+    </div>
+    <div class="exit">出口：三轮递进（基础→深挖→压力）· 按公司难度 · 报告 + 弱点走 HITL 写记忆</div>
+    <ul class="list">
+      <li class="ok">有状态的独立面试会话（<span style="font-family:var(--mono)">interview_session</span> / <span style="font-family:var(--mono)">interview_message</span>）——<b>阶段推进由服务端状态机裁决</b>，模型只负责措辞</li>
+      <li class="ok">不过 <span style="font-family:var(--mono)">AgentRunner</span>：直接调 <span style="font-family:var(--mono)">ChatPort</span>（runner 的硬编码 SYSTEM_PROMPT 与单轮预算 / HITL 短路跟三轮面试冲突）</li>
+      <li class="ok">难度 = 公司档位预设 + 可覆盖（创建时快照）</li>
+      <li class="ok">面经用 <span style="font-family:var(--mono)">doc_type=INTERVIEW</span> 显式标记，可被面试官专门检索</li>
+      <li class="ok">报告 + 弱点复用 <span style="font-family:var(--mono)">memory_candidate_create</span> 审批写记忆（<span style="font-family:var(--mono)">ApprovalExecutionService</span> 零改动）</li>
+      <li class="ok">前端 <span style="font-family:var(--mono)">/interview</span> 页：设置 → 问答线程 → 报告 + 弱点勾选审批</li>
+    </ul>
+  </section>
+
+  <!-- 云端 AI 双路径 -->
+  <section>
+    <div class="sec-head">
+      <h2>云端 AI 双路径（不再依赖 Ollama）</h2>
+      <span class="badge done">✅ 已完成</span>
+    </div>
+    <div class="exit">出口：嵌入/对话改走云端 API；本地/云端一处切换；密钥只进 .env</div>
+    <ul class="list">
+      <li class="ok"><b>provider 一处切换</b>：环境变量 <span style="font-family:var(--mono)">JOBPILOT_AGENT_PROVIDER_PATH</span>（ollama|openai）同时驱动 <span style="font-family:var(--mono)">provider-path</span> 与 <span style="font-family:var(--mono)">spring.ai.model.chat/embedding</span>，启动断言防漂移</li>
+      <li class="ok"><b>云端</b>：嵌入 SiliconFlow <span style="font-family:var(--mono)">bge-large-zh-v1.5</span>、对话智谱 <span style="font-family:var(--mono)">GLM-4.7-Flash</span>（都走 Spring AI OpenAI 客户端；未用模态设 none 以免无 key 启动失败）</li>
+      <li class="ok"><b>密钥 / .env</b>：真实值只进 gitignored 的 <span style="font-family:var(--mono)">.env</span>；<span style="font-family:var(--mono)">.env.example</span> 是可入库的占位模板</li>
+      <li class="ok"><b>重排序</b>：SiliconFlow <span style="font-family:var(--mono)">bge-reranker-v2-m3</span>；失败静默回退向量序、<b>不置 degraded</b></li>
+      <li class="ok"><b>全量重建</b>：<span style="font-family:var(--mono)">POST /documents/reindex-all</span>——换嵌入模型后必须执行（维度相同也会静默劣化；启动自检按集合里的 <span style="font-family:var(--mono)">embedding_model</span> 拦）</li>
+    </ul>
+  </section>
+
   <!-- I-5 -->
   <section class="pending-card">
     <div class="sec-head">
@@ -258,8 +291,8 @@
   </section>
 
   <footer>
-    <b>验证证据（2026-10-06）</b>：后端全量 <code>mvn test</code> <b>236 通过 / 0 失败</b>（含 I-4 前置的会话持久化、知识库列表/删除的真实 MySQL 回归与跨租户隔离）；<code>check-arch.sh</code> 六条全过；前端 <code>pnpm build</code> 类型检查与构建通过。四个页面的接口契约均已用真实后端 curl 验证。<br>
-    尚未提交（工作区改动，待审阅后入库）：I-4 前置（Conversation / Message 持久化）；I-4 前端（<span style="font-family:var(--mono)">frontend/</span> 脚手架 + 四个页面：登录 / 对话 / 知识库 / 账号）；后端知识库「列表 + 删除」两个端点；AGENTS.md 瘦身（拆出伴随文档 <span style="font-family:var(--mono)">docs/agents-reference.md</span>）。最近提交：<code>f14fd6a</code> feat: meter LLM, embedding and agent usage per tenant (I-3c) · <code>6fc0474</code> docs: close out I-3
+    <b>验证证据（2026-10-07）</b>：后端全量 <code>mvn test</code> <b>257 通过 / 0 失败</b>（含面试满弧线、全量重建的跨租户隔离、云端适配器与重排序）；<code>check-arch.sh</code> 六条全过；前端 <code>pnpm build</code> 通过。<br>
+    尚未提交（工作区改动，待审阅后入库）：面试模拟官（BRD US-3）；<b>云端 AI 双路径 + 重排序 + 全量重建（不再依赖 Ollama）</b>；I-4 前端四页。最近提交：<code>43f2e09</code> docs: slim AGENTS.md into a companion reference and record I-4
   </footer>
 
   <div class="meta">生成于 2026-10-06 · 内容同步自 docs/ROADMAP.md（进度唯一事实来源），本页仅为展示视图</div>

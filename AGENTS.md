@@ -13,7 +13,7 @@ This file provides guidance to AI coding agents when working with code in this r
 
 ## 项目快照
 
-- JobPilot：面向求职流程的个人 Copilot **后端**（Java 21 / Spring Boot 4.0 / Maven / MyBatis-Plus + MySQL / Redis / Spring AI 边界 / Ollama + Chroma）。前端（I-4 起）：**Vue 3 + Vite + TS + Element Plus**，独立 `frontend/` SPA。
+- JobPilot：面向求职流程的个人 Copilot **后端**（Java 21 / Spring Boot 4.0 / Maven / MyBatis-Plus + MySQL / Redis / Spring AI 边界 / 模型 **本地 Ollama 或云端 API（OpenAI 兼容）** + Chroma）。前端（I-4 起）：**Vue 3 + Vite + TS + Element Plus**，独立 `frontend/` SPA。
 - **进度**：I-0 ~ I-3 已完成；I-4 进行中（会话持久化前置已完成，页面未开始）。以 `ROADMAP.md` 为准。
 - **产品定位：多租户 SaaS**（2026-10-01 起）。**租户 = 一个自然人用户，无权限可分配。**
 - 根目录 `README.md` 仍停留在骨架阶段，与代码不符；实际能力以 `src/main/java` 为准。
@@ -66,7 +66,7 @@ bash scripts/check-arch.sh                # 架构约束检查（改动 ai/ 或 
 | 全量（需本机 MySQL） | `mvn test` |
 | 纯单元（不需基础设施） | `mvn test -Dtest=KnowledgeRetrievalServiceTest` |
 | 架构门禁 | `bash scripts/check-arch.sh` |
-| 真机 Agent 闭环 | `AGENT_E2E=true mvn test -Dtest=AgentE2EIT`（需 Ollama / Chroma 在线） |
+| 真机 Agent 闭环 | `AGENT_E2E=true mvn test -Dtest=AgentE2EIT`（需模型 provider 与 Chroma 在线） |
 
 ## 导航
 
@@ -80,7 +80,7 @@ bash scripts/check-arch.sh                # 架构约束检查（改动 ai/ 或 
 ## 已知边界
 
 - 未交付：I-4 前端四个页面、云端双路径适配器（I-5）、配额/限流（I-5）、SSE（I-5）。
-- 本机 Ollama / Chroma 需手动启动；`mvn test` 需本机 MySQL。
+- 本地路径需手动启动 Ollama / Chroma；**云端路径只需 `.env` 里的 key**（默认 `provider-path=ollama`，无 key 可起）。`mvn test` 需本机 MySQL。
 
 ## Git 与收尾
 

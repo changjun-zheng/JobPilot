@@ -2,10 +2,10 @@
 
 | 项 | 内容 |
 |---|---|
-| 最后更新 | 2026-10-06 |
-| 当前迭代 | **I-4 进行中：后端前置（Conversation/Message 持久化）已完成，四个页面未开始** |
+| 最后更新 | 2026-10-07 |
+| 当前迭代 | **I-4 进行中：前端四页（登录/对话/知识库/账号）已可用；另落地面试模拟官（US-3）与云端 AI 双路径（不再依赖 Ollama）** |
 | 已完成 | I-0、I-1、I-2、I-3 |
-| 最近验证 | 229 个测试通过（含会话持久化：两条有序消息、次轮回填上下文、跨租户读/删 404）；`check-arch.sh` 全部通过 |
+| 最近验证 | 257 个测试通过（含面试满弧线、全量重建隔离、云端适配器）；`check-arch.sh` 全部通过；前端 `pnpm build` 通过 |
 
 > **本文件是「进度状态」的唯一事实来源。**
 > BRD / PRD / ARCHITECTURE 只回答「要做什么」和「为什么这么做」，**不记录做到哪一步**。
@@ -160,7 +160,7 @@
 
 ### 5.4 明确不做（留给后续）
 
-- [ ] **本地/云端双路径的云端适配器** —— 接缝已留（`ChatPort` 无路径分支、`provider-path` 只允许出现在 Bean 装配处）；云端 provider 与用量计量属 I-3/I-5
+- [x] **本地/云端双路径的云端适配器** —— 2026-10-07 落地：`provider-path`（`ollama|openai`）一处切换驱动三处（含 `spring.ai.model.chat/embedding`），云端走 Spring AI OpenAI 客户端（嵌入 SiliconFlow `bge-large-zh-v1.5`、对话智谱 `GLM-4.7-Flash`）；凭据进 gitignored 的 `.env`。另加 reranker（SiliconFlow `bge-reranker-v2-m3`）与 `reindex-all`
 - [x] **跨 run 会话记忆** —— I-4 前置已落地（会话/消息落库 + `AgentChatService` 回填历史，见 §7）；原记「随 I-3 的 Memory 一起做」改为随 I-4 做
 - [ ] **`application_*` 工具与投递 CRUD** —— 表还不存在，不造空表
 - [ ] **`EXPIRED` 审批状态** —— PRD 列了它，但需要调度器；`PENDING` 长期堆积是已知的小风险
@@ -285,6 +285,21 @@ I-3 实际是四块互不依赖的工作，一次做完会产出低质量代码�
 **验证证据**：`ConversationServiceTest` 8 例（派生 title 按码点截断 / 租户一致性 / 先查后删 / 倒序翻正）；`AgentChatServiceTest` 4 例（编排顺序 / ERROR 不写助手行 / prior 映射）；`AgentRunnerTest` +2 例（prior 拼接位置 / compact 保留 System）；`AgentChatServiceIntegrationTest` 4 例（真实 MySQL：两条有序消息 / **次轮把上轮回填给模型** / 未知 id 404 / 删级联）；`ConversationTenantIsolationIntegrationTest` 2 例（跨租户读/删 404、列表互不可见）。全量 **229 通过**；`check-arch.sh` 六条全过。
 
 > **踩坑记录**：改 V5 迁移的注释导致 Flyway 校验和不匹配、整套集成测试起不来——**已应用的迁移不可再改**。注释修正改由 V9 头注释与 ARCHITECTURE §4.3 承载。
+
+### 7.2 面试模拟官（BRD US-3）· 2026-10-06 落地
+
+**背景**：US-3 是 BRD 的 P0，却从未排进任何迭代、无归属 FP、无输出契约；「按公司难度分级」是净新增。本轮补齐。
+
+- [x] **有状态的独立面试会话**（`interview_session` / `interview_message`，V10）—— 阶段 `BASIC → PROJECT_DEEP_DIVE → PRESSURE`，由服务端 `InterviewStateMachine` **裁决**，模型只负责措辞
+- [x] **不经过 `AgentRunner`** —— runner 的硬编码 `SYSTEM_PROMPT`（强制先调 knowledge_search）与单轮预算 / HITL 短路都跟三轮面试冲突；走 `interview.InterviewService` 直接调 `ChatPort`
+- [x] **难度 = 公司档位预设 + 可覆盖**（`jobpilot.interview.tiers`，创建时**快照**）
+- [x] **面经检索**：新增 `doc_type=INTERVIEW`（导入 UI 可选「面经」）；简历/项目走无类型检索
+- [x] **报告 + 弱点走 HITL 写记忆** —— 复用 `memory_candidate_create` 审批（批量/部分审批），`ApprovalExecutionService` **零改动**
+- [x] **前端 `/interview` 页**：设置 → 问答线程（第 x/3 轮 · 阶段）→ 报告 + 弱点勾选审批
+
+**验证证据**：`InterviewStateMachineTest` 5 例（三轮弧线由服务端保证）、`InterviewServiceTest` 6 例（检索传 INTERVIEW / 草稿复用 `memory_candidate_create` / 未知档位与难度拒绝）、`InterviewFlowIntegrationTest` 1 例（真实 MySQL：走完 7 轮 → 报告 → 部分审批 → `user_memory` 行数 == 勾选数、草稿 `PARTIALLY_APPROVED`）、`InterviewTenantIsolationIntegrationTest` 1 例（跨租户读/答/收尾/列表全挡住）。全量 **250 通过**；`check-arch.sh` 六条全过；前端 `pnpm build` 过。
+
+> **踩坑**：`PROJECT_DEEP_DIVE` 17 字符 > `phase VARCHAR(16)` → `Data too long`。V10 是新建、仅被本地库应用过，遂改列宽 + **重置本地 Flyway 应用记录重跑**（不搞「刚建就 ALTER」的 V11）。
 
 ---
 

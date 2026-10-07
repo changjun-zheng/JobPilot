@@ -16,7 +16,13 @@ RAG 闭环需要同时具备：MySQL（Flyway 建表）、Ollama（`bge-m3` 嵌�
 
 配置全部集中在 `jobpilot.rag.*`（`RagProperties`），端口/适配层只读这里，业务层不感知 Ollama/Chroma。
 
-**模型名有两个入口，改一个不够**（2026-10-03 真机验证踩过）：`jobpilot.rag.*` 是给**业务层**读的（端口、Chroma 维度自检），而注入的 `ChatModel` / `EmbeddingModel` 只认 **`spring.ai.ollama.*`**。两处必须指向同一个模型，否则会出现「配置写着 bge-m3、实际请求 mxbai-embed-large」这类 404。Spring AI 的默认值（embedding 是 `mxbai-embed-large`、chat 是 `mistral`）本机都没装，所以**不显式配置就会在嵌入/对话时 404**。
+**模型名与凭据放 `.env`**（`application.yml` 经 `spring.config.import: optional:file:.env[.properties]` 读取）。**凭据只进 gitignored 的 `.env` / 环境变量，绝不进 tracked 文件或日志**；`.env.example` 是可入库的占位模板（含「怎么用」说明）。文件不存在时不报错——CI / 别人 clone 无 `.env` 也能起。
+
+**provider 一处切换（三处同源）**：环境变量 `JOBPILOT_AGENT_PROVIDER_PATH`（`ollama` | `openai`）同时驱动 `jobpilot.agent.provider-path` 与 `spring.ai.model.chat` / `.embedding`。三处必须同源，**`AiProviderConsistencyCheck` 启动时断言**，防止有人只改一处导致「适配器以为 openai、注入的却是 Ollama 模型」这种静默错配。tracked yml 默认 `ollama`（无需 key），`.env` 设 `openai`。**未用的 OpenAI 模态**（audio/image/moderation）在 `spring.ai.model.*` 里显式设 `none`——它们不认 `spring.ai.model.chat`，不关掉会在无 key 时因 `OpenAiAudioSpeechModel` 直接启动失败。
+
+**模型名有两个入口，改一个不够**（2026-10-03 真机验证踩过）：`jobpilot.rag.*` 给**业务层**读（端口、Chroma 维度自检、计量），而注入的 `ChatModel` / `EmbeddingModel` 只认 **`spring.ai.ollama.*`** 或 **`spring.ai.openai.*`**（取决于 provider）。两处必须指向同一个模型，否则会出现「配置写着 bge-m3、实际请求 mxbai-embed-large」这类 404。
+
+**重排序（`jobpilot.rerank.*`，可选）**：SiliconFlow 的 `/rerank`（cross-encoder，`BAAI/bge-reranker-v2-m3`）。`enabled=false`（默认）时检索直接用向量分数排序。**失败不影响检索**——静默回退向量序且**不置 `degraded`**（那个标记专指向量→关键词降级）。
 
 `jobpilot.agent.*`（`AgentProperties`）是 runner 预算与超时。其中 `agent.model` **留空是有意的**——留空即回落到 `spring.ai.ollama.chat.options.model`，刻意不在配置里第三次写模型名。
 
@@ -33,6 +39,7 @@ RAG 闭环需要同时具备：MySQL（Flyway 建表）、Ollama（`bge-m3` 嵌�
 - `GET /api/v1/knowledge/documents?status=&limit=` 文档列表（**I-4**）：按导入时间倒序，`status` 可选（PENDING/PROCESSING/READY/FAILED）；`content` 列不随列表返回（`@TableField(select=false)`）
 - `GET /api/v1/knowledge/documents/{id}` 索引状态查询——异步化后这是跟踪进度的**必需**接口（202 只代表入队成功）
 - `POST /api/v1/knowledge/documents/{id}/reindex` 重排既有文档：仅 `READY` / `FAILED` 可重排（进行中拒绝），重置为 `PENDING` 后交同一个 worker
+- `POST /api/v1/knowledge/documents/reindex-all` 全量重建索引（**切换 embedding 模型后必须执行**）：把本租户 `READY`/`FAILED` 文档重置为 `PENDING`，交同一个 worker 用当前模型重嵌；`202 {resetCount}`。不同模型的向量语义不兼容（**即使维度相同**，如 bge-m3 → bge-large-zh 都是 1024），不重建会让检索静默劣化
 - `DELETE /api/v1/knowledge/documents/{id}` 删除文档（**I-4**）：级联删除**向量 + Chunk + 文档行**（NFR-6）。**向量清理尽力而为**——向量库不可达时仍删 DB 行（文档行与 Chunk 没了，残留向量永远不会被召回；见 `DocumentIngestService.delete` 注释）
 - `POST /api/v1/knowledge/search` 纯检索，响应带 `searchMode` / `degraded`
 - `POST /api/v1/knowledge/ask` 引用问答，响应带 `answer` + `citations` + `searchMode` / `degraded`
@@ -48,6 +55,15 @@ RAG 闭环需要同时具备：MySQL（Flyway 建表）、Ollama（`bge-m3` 嵌�
 - `GET /api/v1/usage/summary?from=&to=` —— 用量汇总（**I-3c 可归集**）。三维度（EMBEDDING / LLM_TOKEN / AGENT_RUN）零填充 + 场景细分 + `tokenUnavailable`，存储维度对 `kb_document` 现查。**配额与限流不在本接口**，属 I-5。
 - `GET /api/v1/conversations`（`?limit=`）、`GET /{id}`（详情含按序消息）、`DELETE /{id}` —— 会话（**I-4**）。**没有 POST**：会话在首轮 `/agent/run` 时由服务端新建。只落 **USER / ASSISTANT** 两种消息；助手行带 `steps`（工具步骤摘要）与 `traceId`（可回放 `agent_trace`）。工具调用细节存 `agent_trace_step`，本表不重复；**不含 TOOL 行、不做结构化引用**。
   - **`ERROR` 终态的 run 不写助手消息** → 该会话可能出现两条连续 USER 消息（用户重试），是有意的：罐头错误话不该当作助手的真实回答落库。
+- `POST /api/v1/interview/sessions`（`{company, position?, tier?, difficultyOverride?}`）→ 开一场**模拟面试**（**BRD US-3**），返回 `{sessionId, phase, round, totalRounds, status, question}`
+- `POST /api/v1/interview/sessions/{id}/answers`（`{answer}`）→ 下一题，或 `finished=true`（此时去取报告）
+- `POST /api/v1/interview/sessions/{id}/finish` → 提前收尾：出评估报告 + 落弱点草稿
+- `GET /api/v1/interview/sessions/{id}/report` → `{report, draftId, candidateIds, status}`；未收尾 404
+- `GET /api/v1/interview/sessions/{id}` 详情（状态 + 全部消息）　·　`GET /api/v1/interview/sessions` 列表
+  - **面试不经过 `AgentRunner`**：走 `interview/InterviewService` 直接调 `ChatPort`——runner 的硬编码 `SYSTEM_PROMPT`（第 1 条强制先调 `knowledge_search`）与「单轮预算 + HITL 短路」都跟三轮面试冲突；**阶段推进由服务端 `InterviewStateMachine` 裁决**，模型只负责措辞
+  - 难度 = 公司档位预设（`jobpilot.interview.tiers`）+ 可覆盖；**创建时快照**（改配置不改写历史会话）
+  - 弱点走 **`memory_candidate_create`** 审批写记忆（复用批量/部分审批，`ApprovalExecutionService` **零改动**）；用 `sessionId` 顶替 traceId/conversationId 让草稿幂等键按会话稳定
+  - **面经用 `doc_type=INTERVIEW`** 显式标记（无法从扩展名判断），面试官按此类型专门检索
 
 所有响应（含失败）都带 `requestId`：`RequestIdFilter` 生成、写入 MDC 与 `X-Request-Id` 响应头，用户报障时凭它对齐服务端日志。
 
