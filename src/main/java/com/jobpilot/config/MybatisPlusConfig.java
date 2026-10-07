@@ -26,13 +26,21 @@ import java.util.Set;
 public class MybatisPlusConfig {
 
     /**
-     * 无租户语义的表：认证流程必须在「知道你是谁」之前查这两张表
-     * （登录是拿邮箱+密码反查账号），因此它们天然是跨租户的。
-     * <p>
-     * Flyway 的 {@code flyway_schema_history} **不需要**列入——Flyway 走自己的 JDBC 连接，
-     * 不经过 MyBatis，拦截器根本看不到它。
+     * 无租户语义的表——拦截器**不会**给它们注入 {@code user_id}。<b>两种用途，别混</b>：
+     * <ol>
+     *   <li><b>认证表</b>（{@code user_account} / {@code user_credential}）：登录要在「知道你是谁」之前
+     *       按邮箱反查账号，天然跨租户；</li>
+     *   <li><b>平台内容表</b>（{@code platform_*}）：它们**根本没有 {@code user_id} 列**——是全局数据，
+     *       所有用户可见。拦截器不检查表结构，会给非豁免表盲加 {@code user_id = ?}，
+     *       表没这列就直接报 {@code Unknown column}，所以必须豁免。</li>
+     * </ol>
+     * 注意第二种**不是**「随便塞表进来」的借口：业务表仍必须带 {@code user_id} 且**不**在此列。
+     * 平台内容与租户内容共存的表（{@code kb_document} / {@code kb_chunk}）靠 {@code owner} 列区分，
+     * 由 {@code CHECK (owner='PLATFORM' OR user_id IS NOT NULL)} 在数据库层保证「用户行必有租户」。
      */
-    private static final Set<String> TENANT_EXEMPT_TABLES = Set.of("user_account", "user_credential");
+    private static final Set<String> TENANT_EXEMPT_TABLES = Set.of(
+            "user_account", "user_credential",
+            "platform_company", "platform_position", "platform_company_position");
 
     @Bean
     public MybatisPlusInterceptor mybatisPlusInterceptor() {

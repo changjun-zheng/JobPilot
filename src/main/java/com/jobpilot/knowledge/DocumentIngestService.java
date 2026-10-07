@@ -21,6 +21,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -314,18 +315,29 @@ public class DocumentIngestService {
 
     private void indexChunk(KbDocumentEntity doc, ChunkPart part, List<Double> vector) {
         String vectorId = doc.getId() + "#" + part.seq() + "#" + doc.getIndexVersion();
+        String owner = doc.getOwner() == null || doc.getOwner().isBlank() ? "USER" : doc.getOwner();
 
         // 1.先写 Chroma（upsert 幂等：同 vector_id 重复执行是覆盖而非新增）
-        vectorStore.upsert(vectorId, vector, Map.of(
-                "user_id", doc.getUserId(),
-                "document_id", doc.getId(),
-                "doc_type", doc.getDocType(),
-                "index_version", doc.getIndexVersion()));
+        // 用 LinkedHashMap 而不是 Map.of：平台行（owner=PLATFORM）的 user_id 为 null，
+        // Map.of 遇 null 会 NPE、Chroma 也不接受 null 值——平台行干脆不带 user_id，改带 owner=PLATFORM。
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        if (doc.getUserId() != null) {
+            metadata.put("user_id", doc.getUserId());
+        }
+        metadata.put("owner", owner);
+        metadata.put("document_id", doc.getId());
+        metadata.put("doc_type", doc.getDocType());
+        metadata.put("index_version", doc.getIndexVersion());
+        if (doc.getCompanyId() != null) {
+            metadata.put("company_id", doc.getCompanyId());
+        }
+        vectorStore.upsert(vectorId, vector, metadata);
 
         KbChunkEntity chunk = new KbChunkEntity();
         chunk.setVectorId(vectorId);
         chunk.setDocumentId(doc.getId());
         chunk.setUserId(doc.getUserId());
+        chunk.setOwner(owner);
         chunk.setDocName(doc.getName());
         chunk.setDocType(doc.getDocType());
         chunk.setSectionPath(part.sectionPath());

@@ -33,6 +33,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.when;
@@ -107,7 +108,7 @@ class UsageMeteringIntegrationTest extends MySqlIntegrationTestBase {
     void embeddingSearchMeteredWithCodepointCharCount() {
         String query = "简历里有 emoji 🙂 和中文";
         when(embeddingPort.embed(any())).thenReturn(List.of(0.1));
-        when(vectorStorePort.search(any(), anyInt(), any())).thenReturn(List.of());
+        when(vectorStorePort.search(any(), anyInt(), any(), anyBoolean())).thenReturn(List.of());
         UserContext.set(tenant);
 
         retrievalService.search(new RetrievalQuery(tenant, query, 5, null), UsageScenario.SEARCH);
@@ -126,7 +127,7 @@ class UsageMeteringIntegrationTest extends MySqlIntegrationTestBase {
     @Test
     void refusedAskRecordsNoLlmRow() {
         when(embeddingPort.embed(any())).thenReturn(List.of(0.1));
-        when(vectorStorePort.search(any(), anyInt(), any())).thenReturn(List.of());
+        when(vectorStorePort.search(any(), anyInt(), any(), anyBoolean())).thenReturn(List.of());
         UserContext.set(tenant);
 
         askService.ask(tenant, "知识库里没有的问题", 5, null);
@@ -145,7 +146,7 @@ class UsageMeteringIntegrationTest extends MySqlIntegrationTestBase {
         insertDocument(documentId, tenant, "READY");
         insertChunk(vectorId, documentId, tenant);
         when(embeddingPort.embed(any())).thenReturn(List.of(0.1));
-        when(vectorStorePort.search(any(), anyInt(), any()))
+        when(vectorStorePort.search(any(), anyInt(), any(), anyBoolean()))
                 .thenReturn(List.of(new VectorStorePort.VectorMatch(vectorId, 0.9)));
         when(chatPort.chat(any())).thenReturn(new ChatCompletion("回答", List.of(),
                 FinishReason.STOP, new TokenUsage(11, 7), "ollama", "qwen2.5:3b"));

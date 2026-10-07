@@ -75,11 +75,12 @@ public class ChromaVectorStoreAdapter implements VectorStorePort {
     }
 
     @Override
-    public List<VectorMatch> search(List<Double> queryVector, int topK, Map<String, Object> filters) {
+    public List<VectorMatch> search(List<Double> queryVector, int topK, Map<String, Object> filters,
+                                    boolean includePlatform) {
         Map<String, Object> request = Map.of(
                 "query_embeddings", List.of(queryVector),
                 "n_results", topK,
-                "where", buildWhere(filters));
+                "where", buildWhere(filters, includePlatform));
         QueryResponse response = restClient.post()
                 .uri("/api/v1/collections/{cid}/query", ensureCollectionId())
                 .contentType(MediaType.APPLICATION_JSON)
@@ -128,25 +129,38 @@ public class ChromaVectorStoreAdapter implements VectorStorePort {
                                 + list.stream().map(CollectionDto::name).toList())));
     }
 
-    /** filters 必须包含 user_id；缺失时 fail-closed，绝不能发出无 where 的跨租户查询。 */
-    private Map<String, Object> buildWhere(Map<String, Object> filters) {
-        if (filters == null || filters.get("user_id") == null
-                || String.valueOf(filters.get("user_id")).isBlank()) {
+    /**
+     * 组装 Chroma 的 {@code where}。
+     * <p>
+     * <b>fail-closed</b>：{@code filters} 必须含非空 {@code user_id}，否则抛——绝不能发出无租户条件的查询。
+     * {@code includePlatform=true} 时把租户条件从 {@code user_id=<t>} 改成
+     * {@code $or[user_id=<t>, owner='PLATFORM']}（**另一支是「平台」，不是「任意」**），
+     * 其余过滤键与它 {@code $and}。
+     */
+    private Map<String, Object> buildWhere(Map<String, Object> filters, boolean includePlatform) {
+        Object tenant = filters == null ? null : filters.get("user_id");
+        if (tenant == null || String.valueOf(tenant).isBlank()) {
             throw new IllegalArgumentException("向量检索缺少 user_id 租户过滤条件");
         }
-        List<Map<String, Object>> conditions = new ArrayList<>();
+        Map<String, Object> tenantCondition = includePlatform
+                ? Map.of("$or", List.of(
+                        Map.of("user_id", Map.of("$eq", String.valueOf(tenant))),
+                        Map.of("owner", Map.of("$eq", "PLATFORM"))))
+                : Map.of("user_id", Map.of("$eq", String.valueOf(tenant)));
+
+        List<Map<String, Object>> others = new ArrayList<>();
         filters.forEach((key, value) -> {
-            if (value != null) {
-                conditions.add(Map.of(key, Map.of("$eq", String.valueOf(value))));
+            if (!"user_id".equals(key) && value != null) {
+                others.add(Map.of(key, Map.of("$eq", String.valueOf(value))));
             }
         });
-        if (conditions.isEmpty()) {
-            return Map.of();
+        if (others.isEmpty()) {
+            return tenantCondition;
         }
-        if (conditions.size() == 1) {
-            return conditions.get(0);
-        }
-        return Map.of("$and", conditions);
+        List<Map<String, Object>> and = new ArrayList<>();
+        and.add(tenantCondition);
+        and.addAll(others);
+        return Map.of("$and", and);
     }
 
     private String ensureCollectionId() {

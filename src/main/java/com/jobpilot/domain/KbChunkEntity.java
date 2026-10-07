@@ -14,6 +14,8 @@ public class KbChunkEntity {
     private String vectorId;
     private String documentId;
     private String userId;
+    /** USER / PLATFORM。平台行（PLATFORM）的 userId 为 null；DB 用 CHECK 约束保证「USER 行必有 userId」 */
+    private String owner;
     /** 冗余文档名，组装引用不依赖 JOIN */
     private String docName;
     /** 冗余文档类型，作为检索过滤维度 */
@@ -49,6 +51,14 @@ public class KbChunkEntity {
 
     public void setUserId(String userId) {
         this.userId = userId;
+    }
+
+    public String getOwner() {
+        return owner;
+    }
+
+    public void setOwner(String owner) {
+        this.owner = owner;
     }
 
     public String getDocName() {

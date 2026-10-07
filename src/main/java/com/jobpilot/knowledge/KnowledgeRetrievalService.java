@@ -25,10 +25,11 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Function;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -110,8 +111,9 @@ public class KnowledgeRetrievalService {
         if (query.docType() != null && !query.docType().isBlank()) {
             filters.put("doc_type", query.docType());
         }
+        // includePlatform=true：把平台内容并入检索（where = user_id=<t> OR owner='PLATFORM'）
         List<VectorStorePort.VectorMatch> matches =
-                vectorStore.search(queryVector, topK * CANDIDATE_POOL_FACTOR, filters);
+                vectorStore.search(queryVector, topK * CANDIDATE_POOL_FACTOR, filters, true);
         if (matches.isEmpty()) {
             return RetrievalResult.vector(List.of());
         }
@@ -174,30 +176,40 @@ public class KnowledgeRetrievalService {
         return hits;
     }
 
-    /** 降级路径：提取关键词 → MySQL LIKE OR 查询（暴力版，够 M-1 演示降级语义） */
+    /**
+     * 降级路径：提取关键词 → MySQL LIKE OR 查询（暴力版，够 M-1 演示降级语义）。
+     * <p>
+     * 也**并入平台内容**——否则「一降级就看不到平台面经」是个不对称的坑。
+     * 注意：用户自己没有 READY 文档时**不能提前返回**，那时仍要查平台。
+     */
     private List<RetrievedChunk> keywordSearch(RetrievalQuery query, int topK) {
         List<String> keywords = extractKeywords(query.text());
         if (keywords.isEmpty()) {
             return List.of();
         }
+        int candidatePool = Math.max(topK * 4, 20);
+        List<KbChunkEntity> candidates = new ArrayList<>();
+
         QueryWrapper<KbDocumentEntity> documentWrapper = new QueryWrapper<>();
         documentWrapper.eq("status", "READY");
         List<String> readyDocumentIds = documentMapper.selectList(documentWrapper).stream()
                 .map(KbDocumentEntity::getId)
                 .toList();
-        if (readyDocumentIds.isEmpty()) {
-            return List.of();
+        if (!readyDocumentIds.isEmpty()) {
+            QueryWrapper<KbChunkEntity> wrapper = new QueryWrapper<>();
+            wrapper.in("document_id", readyDocumentIds)
+                    .and(w -> keywords.forEach(kw -> w.or().like("text", kw)));
+            if (query.docType() != null && !query.docType().isBlank()) {
+                wrapper.eq("doc_type", query.docType());
+            }
+            wrapper.orderByAsc("document_id", "seq").last("LIMIT " + candidatePool);
+            candidates.addAll(chunkMapper.selectList(wrapper));
         }
+        // 平台内容也并进来（@InterceptorIgnore 方法，只读 owner='PLATFORM'，永不返回租户行）
+        candidates.addAll(chunkMapper.selectPlatformChunksByKeywords(
+                keywords, query.docType(), candidatePool));
 
-        QueryWrapper<KbChunkEntity> wrapper = new QueryWrapper<>();
-        wrapper.in("document_id", readyDocumentIds)
-                .and(w -> keywords.forEach(kw -> w.or().like("text", kw)));
-        if (query.docType() != null && !query.docType().isBlank()) {
-            wrapper.eq("doc_type", query.docType());
-        }
-        int candidatePool = Math.max(topK * 4, 20);
-        wrapper.orderByAsc("document_id", "seq").last("LIMIT " + candidatePool);
-        return chunkMapper.selectList(wrapper).stream()
+        return candidates.stream()
                 .map(chunk -> new Scored(chunk, countHits(chunk.getText(), keywords)))
                 .filter(s -> s.hits() >= props.keywordMinHits())   // 降级闸门：命中太少不算证据
                 .sorted(Comparator.comparingInt(Scored::hits).reversed())
@@ -258,21 +270,41 @@ public class KnowledgeRetrievalService {
         return false;
     }
 
-    /** 回捞 Chunk 并过滤：只允许 READY 文档参与检索（ARCHITECTURE.md §7.3） */
+    /**
+     * 回捞 Chunk 并过滤：只允许 READY 文档参与检索（ARCHITECTURE.md §7.3）。
+     * <p>
+     * <b>平台行另读</b>：平台 Chunk 的 {@code user_id} 为 NULL，上面那两条租户查询会静默滤掉它们，
+     * 所以用 {@code @InterceptorIgnore} 的平台读方法（只读 {@code owner='PLATFORM'}，永不返回租户行）单独取，
+     * 再与本租户结果**按 vectorId 合并**。
+     */
     private Map<String, KbChunkEntity> loadReadyChunks(Collection<String> vectorIds) {
+        Map<String, KbChunkEntity> merged = new LinkedHashMap<>();
+
+        // 本租户：文档必须 READY
         List<KbChunkEntity> chunks = chunkMapper.selectByIds(vectorIds);
-        if (chunks.isEmpty()) {
-            return Map.of();
+        if (!chunks.isEmpty()) {
+            List<String> docIds = chunks.stream().map(KbChunkEntity::getDocumentId).distinct().toList();
+            QueryWrapper<KbDocumentEntity> docWrapper = new QueryWrapper<>();
+            docWrapper.in("id", docIds).eq("status", "READY");
+            Set<String> readyDocIds = documentMapper.selectList(docWrapper).stream()
+                    .map(KbDocumentEntity::getId).collect(Collectors.toSet());
+            chunks.stream()
+                    .filter(c -> readyDocIds.contains(c.getDocumentId()))
+                    .forEach(c -> merged.put(c.getVectorId(), c));
         }
-        List<String> docIds = chunks.stream().map(KbChunkEntity::getDocumentId).distinct().toList();
-        QueryWrapper<KbDocumentEntity> docWrapper = new QueryWrapper<>();
-        docWrapper.in("id", docIds).eq("status", "READY");
-        Map<String, ?> readyDocs = documentMapper.selectList(docWrapper).stream()
-                .collect(Collectors.toMap(KbDocumentEntity::getId, Function.identity()));
-        return chunks.stream()
-                .filter(c -> readyDocs.containsKey(c.getDocumentId()))
-                .collect(Collectors.toMap(KbChunkEntity::getVectorId, Function.identity(),
-                        (a, b) -> a, LinkedHashMap::new));
+
+        // 平台：单独读（租户查询够不着），文档同样要 READY
+        List<KbChunkEntity> platformChunks = chunkMapper.selectPlatformChunksByIds(vectorIds);
+        if (!platformChunks.isEmpty()) {
+            List<String> platformDocIds = platformChunks.stream()
+                    .map(KbChunkEntity::getDocumentId).distinct().toList();
+            Set<String> readyPlatformDocIds = new HashSet<>(
+                    documentMapper.selectPlatformReadyDocumentIds(platformDocIds));
+            platformChunks.stream()
+                    .filter(c -> readyPlatformDocIds.contains(c.getDocumentId()))
+                    .forEach(c -> merged.put(c.getVectorId(), c));
+        }
+        return merged;
     }
 
     private RetrievedChunk toRetrieved(KbChunkEntity chunk, double score) {

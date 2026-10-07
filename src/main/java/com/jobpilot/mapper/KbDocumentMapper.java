@@ -9,6 +9,7 @@ import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 
 public interface KbDocumentMapper extends BaseMapper<KbDocumentEntity> {
@@ -70,4 +71,20 @@ public interface KbDocumentMapper extends BaseMapper<KbDocumentEntity> {
             WHERE status = 'PROCESSING' AND updated_at < #{cutoff}
             """)
     int resetStaleProcessing(@Param("now") LocalDateTime now, @Param("cutoff") LocalDateTime cutoff);
+
+    /**
+     * 给定 id 里**属于平台、且状态为 READY** 的那批文档 id（回捞平台 Chunk 时校验其文档已就绪）。
+     * <p>
+     * 同上面的纪律：{@code @InterceptorIgnore(tenantLine)} + SQL 里硬写 {@code owner='PLATFORM'}，
+     * <b>只读平台行，永不返回任何租户的行</b>——不构成跨租户泄漏面。改动本条 SQL 要重过这个论证。
+     */
+    @InterceptorIgnore(tenantLine = "true")
+    @Select("""
+            <script>
+            SELECT id FROM kb_document
+            WHERE owner = 'PLATFORM' AND status = 'READY' AND id IN
+            <foreach item='id' collection='ids' open='(' separator=',' close=')'>#{id}</foreach>
+            </script>
+            """)
+    List<String> selectPlatformReadyDocumentIds(@Param("ids") Collection<String> ids);
 }

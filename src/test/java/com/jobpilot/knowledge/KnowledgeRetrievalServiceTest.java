@@ -19,12 +19,14 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -65,7 +67,7 @@ class KnowledgeRetrievalServiceTest {
     @Test
     void vectorHitAboveThresholdReturnsChunk() {
         when(embeddingPort.embed(any())).thenReturn(List.of(0.1));
-        when(vectorStore.search(any(), anyInt(), anyMap()))
+        when(vectorStore.search(any(), anyInt(), anyMap(), anyBoolean()))
                 .thenReturn(List.of(new VectorStorePort.VectorMatch("doc1#0#1", 0.8)));
         when(chunkMapper.selectByIds(any())).thenReturn(List.of(chunk("doc1#0#1")));
         when(documentMapper.selectList(any())).thenReturn(List.of(readyDoc()));
@@ -85,7 +87,7 @@ class KnowledgeRetrievalServiceTest {
     void rerankReordersCandidatesWhenEnabled() {
         when(rerankProps.enabled()).thenReturn(true);
         when(embeddingPort.embed(any())).thenReturn(List.of(0.1));
-        when(vectorStore.search(any(), anyInt(), anyMap())).thenReturn(List.of(
+        when(vectorStore.search(any(), anyInt(), anyMap(), anyBoolean())).thenReturn(List.of(
                 new VectorStorePort.VectorMatch("A#0#1", 0.9),
                 new VectorStorePort.VectorMatch("B#0#1", 0.8)));
         when(chunkMapper.selectByIds(any()))
@@ -108,7 +110,7 @@ class KnowledgeRetrievalServiceTest {
     void rerankFailureFallsBackToVectorOrderWithoutDegraded() {
         when(rerankProps.enabled()).thenReturn(true);
         when(embeddingPort.embed(any())).thenReturn(List.of(0.1));
-        when(vectorStore.search(any(), anyInt(), anyMap())).thenReturn(List.of(
+        when(vectorStore.search(any(), anyInt(), anyMap(), anyBoolean())).thenReturn(List.of(
                 new VectorStorePort.VectorMatch("A#0#1", 0.9),
                 new VectorStorePort.VectorMatch("B#0#1", 0.8)));
         when(chunkMapper.selectByIds(any())).thenReturn(List.of(chunk("A#0#1"), chunk("B#0#1")));
@@ -128,7 +130,7 @@ class KnowledgeRetrievalServiceTest {
     @Test
     void belowThresholdReturnsEmptyWithoutLLM() {
         when(embeddingPort.embed(any())).thenReturn(List.of(0.1));
-        when(vectorStore.search(any(), anyInt(), anyMap()))
+        when(vectorStore.search(any(), anyInt(), anyMap(), anyBoolean()))
                 .thenReturn(List.of(new VectorStorePort.VectorMatch("doc1#0#1", 0.2)));
 
         RagAskService.AskAnswer answer = askService.ask("u1", "完全无关的问题", 5, null);
@@ -141,7 +143,7 @@ class KnowledgeRetrievalServiceTest {
     @Test
     void chromaOutageDegradesToKeywordSearch() {
         when(embeddingPort.embed(any())).thenReturn(List.of(0.1));
-        when(vectorStore.search(any(), anyInt(), anyMap()))
+        when(vectorStore.search(any(), anyInt(), anyMap(), anyBoolean()))
                 .thenThrow(new IllegalStateException("Chroma 不可用"));
         // 同时命中 "RAG" 与 "经验" 两个关键词，达到 keywordMinHits = 2
         when(chunkMapper.selectList(any()))
@@ -163,7 +165,7 @@ class KnowledgeRetrievalServiceTest {
     @Test
     void emptyReadyDocumentSetSkipsChunkQueryDuringKeywordFallback() {
         when(embeddingPort.embed(any())).thenReturn(List.of(0.1));
-        when(vectorStore.search(any(), anyInt(), anyMap()))
+        when(vectorStore.search(any(), anyInt(), anyMap(), anyBoolean()))
                 .thenThrow(new IllegalStateException("Chroma 不可用"));
         when(documentMapper.selectList(any())).thenReturn(List.of());
 
@@ -173,13 +175,15 @@ class KnowledgeRetrievalServiceTest {
         assertThat(result.degraded()).isTrue();
         assertThat(result.searchMode()).isEqualTo(com.jobpilot.ai.SearchMode.KEYWORD_FALLBACK);
         assertThat(result.items()).isEmpty();
-        verifyNoInteractions(chunkMapper);
+        // 空 READY 文档集时**跳过本租户**的 Chunk 查询；但**仍要查平台**——
+        // 平台内容不依赖用户有没有自己的文档（见 PlatformRetrievalIsolationIntegrationTest）
+        verify(chunkMapper, never()).selectList(any());
     }
 
     @Test
     void keywordFallbackBelowMinHitsRefusesWithoutLLM() {
         when(embeddingPort.embed(any())).thenReturn(List.of(0.1));
-        when(vectorStore.search(any(), anyInt(), anyMap()))
+        when(vectorStore.search(any(), anyInt(), anyMap(), anyBoolean()))
                 .thenThrow(new IllegalStateException("Chroma 不可用"));
         // chunk 只命中 "RAG" 一个关键词，低于 keywordMinHits = 2 → 不算证据
         when(documentMapper.selectList(any())).thenReturn(List.of(readyDoc()));
@@ -218,7 +222,7 @@ class KnowledgeRetrievalServiceTest {
     @Test
     void vectorSearchOverFetchesCandidatesThenTruncatesToTopK() {
         when(embeddingPort.embed(any())).thenReturn(List.of(0.1));
-        when(vectorStore.search(any(), anyInt(), anyMap())).thenReturn(List.of(
+        when(vectorStore.search(any(), anyInt(), anyMap(), anyBoolean())).thenReturn(List.of(
                 new VectorStorePort.VectorMatch("doc1#0#1", 0.9),
                 new VectorStorePort.VectorMatch("doc1#0#2", 0.8),
                 new VectorStorePort.VectorMatch("doc1#0#3", 0.7),
@@ -236,7 +240,7 @@ class KnowledgeRetrievalServiceTest {
         // 用户要 2 条，候选池里 6 条都过阈值——截断后应是分数最高的 2 条，且顺序保持
         assertThat(result.items()).extracting(RetrievedChunk::chunkId)
                 .containsExactly("doc1#0#1", "doc1#0#2");
-        verify(vectorStore).search(any(), eq(6), anyMap()); // topK(2) × CANDIDATE_POOL_FACTOR(3)
+        verify(vectorStore).search(any(), eq(6), anyMap(), anyBoolean()); // topK(2) × CANDIDATE_POOL_FACTOR(3)
     }
 
     /** 汉字长 token 用 2 字窗口——原 3 字窗口在中文里几乎切不出词 */

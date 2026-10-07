@@ -5,6 +5,7 @@ import com.jobpilot.ai.ChatPort;
 import com.jobpilot.ai.ChatRequest;
 import com.jobpilot.ai.EmbeddingPort;
 import com.jobpilot.ai.FinishReason;
+import com.jobpilot.ai.RerankPort;
 import com.jobpilot.ai.VectorStorePort;
 import com.jobpilot.common.ApiException;
 import com.jobpilot.conversation.ConversationService;
@@ -141,6 +142,16 @@ public class AgentChatServiceIntegrationTest extends MySqlIntegrationTestBase {
         @Primary
         ChatPort chatPort() {
             return org.mockito.Mockito.mock(ChatPort.class);
+        }
+
+        /**
+         * 恒空的 RerankPort：让集成测试**不依赖真实的云端重排**。恒空 → 服务按「不可用」处理，
+         * 回退到向量分数顺序（确定性、无网络）。
+         */
+        @Bean
+        @Primary
+        RerankPort rerankPort() {
+            return (query, documents, topN) -> java.util.List.of();
         }
     }
 }

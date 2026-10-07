@@ -14,6 +14,10 @@ public class KbDocumentEntity {
     @TableId(type = IdType.ASSIGN_UUID)
     private String id;
     private String userId;
+    /** USER / PLATFORM。平台行（PLATFORM）的 userId 为 null；DB 用 CHECK 约束保证「USER 行必有 userId」 */
+    private String owner;
+    /** 关联的平台公司（面经用；可选，仅平台行有意义） */
+    private String companyId;
     private String name;
     /** MARKDOWN / PLAIN_TEXT */
     private String docType;
@@ -49,6 +53,22 @@ public class KbDocumentEntity {
 
     public void setUserId(String userId) {
         this.userId = userId;
+    }
+
+    public String getOwner() {
+        return owner;
+    }
+
+    public void setOwner(String owner) {
+        this.owner = owner;
+    }
+
+    public String getCompanyId() {
+        return companyId;
+    }
+
+    public void setCompanyId(String companyId) {
+        this.companyId = companyId;
     }
 
     public String getName() {

@@ -28,6 +28,7 @@ import java.util.UUID;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -67,7 +68,7 @@ class KeywordFallbackDegradationIntegrationTest extends MySqlIntegrationTestBase
         reset(vectorStore, embeddingPort);
         when(embeddingPort.embed(any())).thenReturn(List.of(0.1));
         when(vectorStore.collectionInfo()).thenReturn(Optional.empty());
-        when(vectorStore.search(any(), any(Integer.class), any()))
+        when(vectorStore.search(any(), any(Integer.class), any(), anyBoolean()))
                 .thenThrow(new IllegalStateException("offline"));
     }
 

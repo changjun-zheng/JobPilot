@@ -22,8 +22,15 @@ public interface VectorStorePort {
      */
     void deleteByDocumentId(String documentId);
 
-    /** 相似度检索，按分数降序返回至多 topK 条 */
-    List<VectorMatch> search(List<Double> queryVector, int topK, Map<String, Object> filters);
+    /**
+     * 相似度检索，按分数降序返回至多 topK 条。
+     *
+     * @param includePlatform true 时把**平台内容**并入检索（{@code user_id=<t> OR owner='PLATFORM'}）；
+     *                        false 时只查本租户。**两种都必须带租户条件**（fail-closed）——
+     *                        {@code includePlatform} 的另一支是「平台」，不是「任意」。
+     */
+    List<VectorMatch> search(List<Double> queryVector, int topK, Map<String, Object> filters,
+                             boolean includePlatform);
 
     /**
      * 探活：<b>只读地</b>检查配置的集合是否存在，绝不创建集合。

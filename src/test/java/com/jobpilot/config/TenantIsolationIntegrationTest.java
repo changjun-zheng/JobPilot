@@ -34,6 +34,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -88,7 +89,7 @@ class TenantIsolationIntegrationTest extends MySqlIntegrationTestBase {
         reset(vectorStore, embeddingPort);
         when(embeddingPort.embed(any())).thenReturn(List.of(0.1));
         when(vectorStore.collectionInfo()).thenReturn(Optional.empty());
-        when(vectorStore.search(any(), any(Integer.class), any())).thenThrow(new IllegalStateException("offline"));
+        when(vectorStore.search(any(), any(Integer.class), any(), anyBoolean())).thenThrow(new IllegalStateException("offline"));
     }
 
     @AfterEach
