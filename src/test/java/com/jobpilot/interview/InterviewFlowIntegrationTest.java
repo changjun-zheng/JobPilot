@@ -75,7 +75,7 @@ class InterviewFlowIntegrationTest extends MySqlIntegrationTestBase {
     @Test
     void fullArcProducesReportAndPartialApprovalWritesExactlyTheChosenMemories() {
         var start = interviewService.start(
-                new InterviewService.StartCommand(tenant, "字节跳动", "后端", "BIG_TECH", null));
+                new InterviewService.StartCommand(tenant, List.of("comp-bytedance"), "后端", null));
         String sessionId = start.sessionId();
         assertThat(start.round()).isEqualTo(1);
         assertThat(start.question()).isNotBlank();
@@ -97,6 +97,39 @@ class InterviewFlowIntegrationTest extends MySqlIntegrationTestBase {
 
         assertThat(countMemories()).isEqualTo(1);
         assertThat(draftStatus(report.draftId())).isEqualTo("PARTIALLY_APPROVED");
+    }
+
+    /** 多家公司混合成一套题：关联行逐家落库，会话快照公司名顿号连接、档位取最高 */
+    @Test
+    void multipleCompaniesRecordOneLinkPerCompanyAndResolveHardestTier() {
+        var start = interviewService.start(new InterviewService.StartCommand(
+                tenant, List.of("comp-xiaomi", "comp-bytedance"), "后端", null));
+
+        Integer links = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM interview_session_company WHERE session_id = ?",
+                Integer.class, start.sessionId());
+        assertThat(links).isEqualTo(2);
+
+        assertThat(companyOf(start.sessionId())).contains("小米").contains("字节跳动");
+        assertThat(tierOf(start.sessionId())).isEqualTo("BIG_TECH"); // 小米 MID_TECH < 字节 BIG_TECH
+    }
+
+    /** 请求里含不存在/已下架的 ID → 400，且不落任何会话 */
+    @Test
+    void unknownCompanyIdIsRejected() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> interviewService.start(
+                        new InterviewService.StartCommand(tenant, List.of("no-such-company"), null, null)))
+                .isInstanceOf(com.jobpilot.common.ApiException.class);
+    }
+
+    private String companyOf(String sessionId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT company FROM interview_session WHERE id = ?", String.class, sessionId);
+    }
+
+    private String tierOf(String sessionId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT tier FROM interview_session WHERE id = ?", String.class, sessionId);
     }
 
     private ChatCompletion completion(String content) {

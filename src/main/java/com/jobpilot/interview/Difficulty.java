@@ -26,4 +26,13 @@ public enum Difficulty {
                     "未知难度：" + raw + "，允许值：" + Arrays.toString(values()));
         }
     }
+
+    /**
+     * 难度高低序号（{@code EASY < MEDIUM < HARD}）。
+     * <p>
+     * 声明顺序即高低顺序——「多家公司混成一套题」时取其中<b>最高</b>的档位（{@code max(rank)}）。
+     */
+    public int rank() {
+        return ordinal();
+    }
 }

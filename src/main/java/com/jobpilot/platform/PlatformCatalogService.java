@@ -7,6 +7,7 @@ import com.jobpilot.mapper.PlatformCompanyMapper;
 import com.jobpilot.mapper.PlatformPositionMapper;
 import org.springframework.stereotype.Service;
 
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -53,5 +54,22 @@ public class PlatformCatalogService {
     public List<PlatformPositionEntity> positions() {
         return positionMapper.selectList(
                 new QueryWrapper<PlatformPositionEntity>().orderByAsc("name"));
+    }
+
+    /**
+     * 按 ID 批量取**在架**公司（面试选公司用）。
+     * <p>
+     * 只返回 {@code status='ACTIVE'} 的行——调用方据此校验「请求的 ID 是否都有效」：
+     * 返回条数少于去重后的请求 ID 数，说明存在无效 ID 或已下架公司，应当拒绝而不是静默丢弃。
+     * 结果按公司名升序（确定顺序，便于快照与展示）。
+     */
+    public List<PlatformCompanyEntity> activeCompaniesByIds(Collection<String> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        return companyMapper.selectList(new QueryWrapper<PlatformCompanyEntity>()
+                .in("id", ids)
+                .eq("status", "ACTIVE")
+                .orderByAsc("name"));
     }
 }

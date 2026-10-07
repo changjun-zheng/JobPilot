@@ -9,6 +9,8 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -48,5 +50,13 @@ class PlatformCatalogIntegrationTest extends MySqlIntegrationTestBase {
     @Test
     void unknownPositionYieldsEmpty() {
         assertThat(catalogService.companies("不存在的岗位", null)).isEmpty();
+    }
+
+    @Test
+    void activeCompaniesByIdsReturnsOnlyRequestedActiveOnes() {
+        // 命中数 == 去重后的请求数 才说明请求的 ID 都有效——调用方据此拒绝「无效/已下架」
+        assertThat(catalogService.activeCompaniesByIds(List.of("comp-bytedance", "no-such-id")))
+                .extracting(PlatformCompanyEntity::getId)
+                .containsExactly("comp-bytedance");
     }
 }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, ref } from 'vue'
+import { nextTick, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Promotion } from '@element-plus/icons-vue'
 import { approveDraft } from '@/api/agent'
@@ -11,6 +11,7 @@ import {
   type InterviewMessage,
   type ReportResult,
 } from '@/api/interview'
+import { listCompanies, listPositions, type PlatformCompany, type PlatformPosition } from '@/api/catalog'
 
 type Stage = 'setup' | 'interview' | 'report'
 
@@ -18,15 +19,17 @@ const stage = ref<Stage>('setup')
 const loading = ref(false)
 
 // ── 设置 ──────────────────────────────────────────────
-const setup = ref({ company: '', position: '', tier: 'BIG_TECH', difficultyOverride: '' })
-// 档位列表与后端 jobpilot.interview.tiers 对应（后端暂未暴露接口，前端先写死）
-const TIERS = [
-  { value: 'BIG_TECH', label: '大厂（困难）' },
-  { value: 'MID_TECH', label: '中厂（中等）' },
-  { value: 'STARTUP', label: '初创（简单）' },
-]
+// 目标公司来自平台目录（可多选）：选中多家 = 把这几家的面经混成一套题，难度取其中最高档。
+const setup = ref({ position: '', companyIds: [] as string[], difficultyOverride: '' })
+const positions = ref<PlatformPosition[]>([])
+const companies = ref<PlatformCompany[]>([])
+const TIER_LABEL: Record<string, string> = {
+  BIG_TECH: '大厂/困难',
+  MID_TECH: '中厂/中等',
+  STARTUP: '初创/简单',
+}
 const DIFFICULTIES = [
-  { value: '', label: '按档位预设' },
+  { value: '', label: '按公司综合档位' },
   { value: 'EASY', label: '简单' },
   { value: 'MEDIUM', label: '中等' },
   { value: 'HARD', label: '困难' },
@@ -35,6 +38,25 @@ const PHASE_LABEL: Record<string, string> = {
   BASIC: '基础题',
   PROJECT_DEEP_DIVE: '项目深挖',
   PRESSURE: '压力面',
+}
+
+onMounted(async () => {
+  try {
+    positions.value = await listPositions()
+    await loadCompanies()
+  } catch {
+    /* 拦截器已提示 */
+  }
+})
+
+async function loadCompanies() {
+  try {
+    companies.value = await listCompanies(
+      setup.value.position ? { position: setup.value.position } : {},
+    )
+  } catch {
+    companies.value = []
+  }
 }
 
 // ── 面试 ──────────────────────────────────────────────
@@ -60,16 +82,15 @@ async function scrollToBottom() {
 }
 
 async function begin() {
-  if (!setup.value.company.trim()) {
-    ElMessage.warning('请输入目标公司')
+  if (setup.value.companyIds.length === 0) {
+    ElMessage.warning('请至少选择一家公司')
     return
   }
   loading.value = true
   try {
     const r = await startInterview({
-      company: setup.value.company,
+      companyIds: setup.value.companyIds,
       position: setup.value.position || undefined,
-      tier: setup.value.tier,
       difficultyOverride: setup.value.difficultyOverride || undefined,
     })
     sessionId.value = r.sessionId
@@ -168,15 +189,31 @@ function restart() {
     <el-card v-if="stage === 'setup'" class="panel-card">
       <template #header>开始一场模拟面试</template>
       <el-form label-width="96px" @submit.prevent="begin">
-        <el-form-item label="目标公司" required>
-          <el-input v-model="setup.company" placeholder="如：字节跳动" />
-        </el-form-item>
         <el-form-item label="目标岗位">
-          <el-input v-model="setup.position" placeholder="如：后端开发（可选）" />
+          <el-select
+            v-model="setup.position"
+            class="w220"
+            clearable
+            placeholder="全部岗位"
+            @change="loadCompanies"
+          >
+            <el-option v-for="p in positions" :key="p.id" :value="p.name" :label="p.name" />
+          </el-select>
         </el-form-item>
-        <el-form-item label="公司档位">
-          <el-select v-model="setup.tier" class="w220">
-            <el-option v-for="t in TIERS" :key="t.value" :value="t.value" :label="t.label" />
+        <el-form-item label="目标公司" required>
+          <el-select
+            v-model="setup.companyIds"
+            class="wfull"
+            multiple
+            filterable
+            placeholder="选择一家或多家公司（多家 = 混成一套题）"
+          >
+            <el-option
+              v-for="c in companies"
+              :key="c.id"
+              :value="c.id"
+              :label="`${c.name}（${TIER_LABEL[c.tier] ?? c.tier}）`"
+            />
           </el-select>
         </el-form-item>
         <el-form-item label="难度">
@@ -186,7 +223,7 @@ function restart() {
         </el-form-item>
         <el-form-item>
           <el-button type="primary" :loading="loading" @click="begin">开始面试</el-button>
-          <span class="hint">基于你的简历与知识库里的面经提问；三轮走完自动出报告。</span>
+          <span class="hint">基于你的简历与这些公司的面经提问；选多家会取最高难度、混成一套题。</span>
         </el-form-item>
       </el-form>
     </el-card>
@@ -274,6 +311,10 @@ function restart() {
 }
 .w220 {
   width: 220px;
+}
+.wfull {
+  width: 100%;
+  max-width: 460px;
 }
 .hint {
   color: #94a3b8;

@@ -14,8 +14,10 @@ import com.jobpilot.common.ErrorCode;
 import com.jobpilot.config.InterviewProperties;
 import com.jobpilot.domain.InterviewMessageEntity;
 import com.jobpilot.domain.InterviewSessionEntity;
+import com.jobpilot.domain.PlatformCompanyEntity;
 import com.jobpilot.knowledge.KnowledgeRetrievalService;
 import com.jobpilot.memory.MemoryService;
+import com.jobpilot.platform.PlatformCatalogService;
 import com.jobpilot.security.UserContext;
 import com.jobpilot.usage.UsageScenario;
 import org.slf4j.Logger;
@@ -23,9 +25,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -64,16 +66,18 @@ public class InterviewService {
 
     private final InterviewStore store;
     private final InterviewProperties props;
+    private final PlatformCatalogService catalogService;
     private final ChatPort chatPort;
     private final KnowledgeRetrievalService retrievalService;
     private final MemoryService memoryService;
     private final ApprovalDraftService draftService;
 
-    public InterviewService(InterviewStore store, InterviewProperties props, ChatPort chatPort,
-                            KnowledgeRetrievalService retrievalService, MemoryService memoryService,
+    public InterviewService(InterviewStore store, InterviewProperties props, PlatformCatalogService catalogService,
+                            ChatPort chatPort, KnowledgeRetrievalService retrievalService, MemoryService memoryService,
                             ApprovalDraftService draftService) {
         this.store = store;
         this.props = props;
+        this.catalogService = catalogService;
         this.chatPort = chatPort;
         this.retrievalService = retrievalService;
         this.memoryService = memoryService;
@@ -82,7 +86,7 @@ public class InterviewService {
 
     // ── 对外结果 ────────────────────────────────────────────────
 
-    public record StartCommand(String userId, String company, String position, String tier, String difficultyOverride) {
+    public record StartCommand(String userId, List<String> companyIds, String position, String difficultyOverride) {
     }
 
     /** 一次开题/追问的结果；{@code finished} 为 true 时 {@code question} 为 null，前端应去取报告 */
@@ -122,25 +126,46 @@ public class InterviewService {
 
     // ── 开始 ────────────────────────────────────────────────────
 
+    /**
+     * 开一场面试。目标公司来自**平台目录**（{@code companyIds}，可多家）——不接自由文本：
+     * 产品定位是「管理员维护公司库，用户从中挑选」。
+     * <p>
+     * <b>多家 = 混合成一套题</b>（设计草案 v3 §4）：把选中公司的面经并进同一次检索、难度取其中
+     * <b>最高</b>档，出**一套综合题 + 一份报告**——不逐家分轮。会话上存顿号连接的展示快照，
+     * 关联行存「这次关联了哪几家」。
+     */
     public TurnResult start(StartCommand command) {
         // 身份由 Controller 从 UserContext 派生；命令带 userId 只为用例可脱离 ThreadLocal 测试，
         // store.create 会再与上下文比对一次（同 DocumentIngestService.enqueue 的约定）
         String userId = requireText(command.userId(), "userId");
-        String company = requireText(command.company(), "公司");
-        String position = blankToNull(command.position());
+        List<String> companyIds = distinct(command.companyIds());
 
-        String tier = command.tier() == null || command.tier().isBlank()
-                ? props.resolvedDefaultTier()
-                : command.tier().strip().toUpperCase(Locale.ROOT);
-        InterviewProperties.InterviewTier tierCfg = props.tier(tier); // 未知档位 → 400
+        List<PlatformCompanyEntity> companies = catalogService.activeCompaniesByIds(companyIds);
+        if (companies.isEmpty()) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "请至少选择一家在架的公司");
+        }
+        if (companies.size() != companyIds.size()) {
+            // 有 ID 未命中（不存在 / 已下架）——拒绝而非静默丢弃，免得用户以为面的是选中的公司
+            throw new ApiException(ErrorCode.BAD_REQUEST, "存在无效或已下架的公司，请刷新后重选");
+        }
+
+        String position = blankToNull(command.position());
+        String display = companies.stream().map(PlatformCompanyEntity::getName).reduce((a, b) -> a + "、" + b)
+                .orElseThrow();
+        String tier = resolveHardestTier(companies);
+        InterviewProperties.InterviewTier tierCfg = props.tier(tier); // 档位未知 → 400
 
         String overrideRaw = blankToNull(command.difficultyOverride());
         Difficulty resolved = overrideRaw == null
                 ? tierCfg.difficulty()
                 : Difficulty.parse(overrideRaw); // 未知难度 → 400
 
-        InterviewSessionEntity session = store.create(userId, company, position, tier,
-                overrideRaw == null ? null : resolved.name(), resolved.name(), props.totalRounds());
+        List<InterviewStore.SelectedCompany> selected = companies.stream()
+                .map(c -> new InterviewStore.SelectedCompany(c.getId(), c.getName(), c.getTier()))
+                .toList();
+
+        InterviewSessionEntity session = store.create(userId, display, position, tier,
+                overrideRaw == null ? null : resolved.name(), resolved.name(), props.totalRounds(), selected);
 
         String question = askQuestion(userId, session, List.of(), null,
                 InterviewPhase.BASIC, tierCfg, resolved);
@@ -148,6 +173,25 @@ public class InterviewService {
 
         return new TurnResult(session.getId(), InterviewPhase.BASIC.name(), 1, props.totalRounds(),
                 InterviewStatus.IN_PROGRESS.name(), question, false);
+    }
+
+    /**
+     * 综合档位 = 选中公司档位中**难度最高**的那个（设计草案 v3 §7：多家混合取最高档）。
+     * 档位配置缺失/未知时由 {@link InterviewProperties#tier} 抛出 → 400。
+     */
+    private String resolveHardestTier(List<PlatformCompanyEntity> companies) {
+        return companies.stream()
+                .map(PlatformCompanyEntity::getTier)
+                .max(Comparator.comparingInt(t -> props.tier(t).difficulty().rank()))
+                .orElse(props.resolvedDefaultTier());
+    }
+
+    /** 去重且保持顺序（用户可能重复勾选，ID 集合去重后与命中条数比较才有意义） */
+    private List<String> distinct(List<String> ids) {
+        if (ids == null) {
+            return List.of();
+        }
+        return ids.stream().filter(id -> id != null && !id.isBlank()).map(String::strip).distinct().toList();
     }
 
     // ── 作答 ────────────────────────────────────────────────────

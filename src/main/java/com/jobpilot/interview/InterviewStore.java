@@ -5,8 +5,10 @@ import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.jobpilot.common.ApiException;
 import com.jobpilot.common.ErrorCode;
 import com.jobpilot.domain.InterviewMessageEntity;
+import com.jobpilot.domain.InterviewSessionCompanyEntity;
 import com.jobpilot.domain.InterviewSessionEntity;
 import com.jobpilot.mapper.InterviewMessageMapper;
+import com.jobpilot.mapper.InterviewSessionCompanyMapper;
 import com.jobpilot.mapper.InterviewSessionMapper;
 import com.jobpilot.security.UserContext;
 import org.springframework.stereotype.Service;
@@ -35,18 +37,29 @@ public class InterviewStore {
 
     private final InterviewSessionMapper sessionMapper;
     private final InterviewMessageMapper messageMapper;
+    private final InterviewSessionCompanyMapper sessionCompanyMapper;
 
-    public InterviewStore(InterviewSessionMapper sessionMapper, InterviewMessageMapper messageMapper) {
+    public InterviewStore(InterviewSessionMapper sessionMapper, InterviewMessageMapper messageMapper,
+                          InterviewSessionCompanyMapper sessionCompanyMapper) {
         this.sessionMapper = sessionMapper;
         this.messageMapper = messageMapper;
+        this.sessionCompanyMapper = sessionCompanyMapper;
+    }
+
+    /** 创建会话时选中的平台公司（创建时快照 ID / 名称 / 档位） */
+    public record SelectedCompany(String companyId, String companyName, String tier) {
     }
 
     // ── 写 ──────────────────────────────────────────────────────
 
-    /** 新建面试会话（状态 IN_PROGRESS、第 1 轮、题数 0）。首题由 {@link #record} 追加 */
+    /**
+     * 新建面试会话（状态 IN_PROGRESS、第 1 轮、题数 0），并落「关联了哪几家平台公司」的关联行。
+     * 首题由 {@link #record} 追加；关联行与主行同一个事务。
+     */
     @Transactional
     public InterviewSessionEntity create(String userId, String company, String position, String tier,
-                                         String difficultyOverride, String resolvedDifficulty, int totalRounds) {
+                                         String difficultyOverride, String resolvedDifficulty, int totalRounds,
+                                         List<SelectedCompany> companies) {
         String contextUserId = UserContext.get();
         if (contextUserId != null && !contextUserId.equals(userId)) {
             throw new com.jobpilot.common.UnauthorizedException("租户上下文与会话归属不一致");
@@ -64,6 +77,18 @@ public class InterviewStore {
         session.setQuestionsInRound(0);
         session.setStatus(InterviewStatus.IN_PROGRESS.name());
         sessionMapper.insert(session);
+
+        if (companies != null) {
+            for (SelectedCompany c : companies) {
+                InterviewSessionCompanyEntity link = new InterviewSessionCompanyEntity();
+                link.setUserId(userId);
+                link.setSessionId(session.getId());
+                link.setCompanyId(c.companyId());
+                link.setCompanyName(c.companyName());
+                link.setTier(c.tier());
+                sessionCompanyMapper.insert(link);
+            }
+        }
         return session;
     }
 

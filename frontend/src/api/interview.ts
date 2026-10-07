@@ -68,11 +68,10 @@ export interface SessionSummary {
   status: string
 }
 
-/** 开一场面试并返回第一题 */
+/** 开一场面试并返回第一题（从平台目录选公司；多家 = 混合成一套题） */
 export function startInterview(data: {
-  company: string
+  companyIds: string[]
   position?: string
-  tier?: string
   difficultyOverride?: string
 }): Promise<TurnResult> {
   return request<TurnResult>({ url: '/interview/sessions', method: 'post', data })

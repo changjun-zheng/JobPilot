@@ -4,6 +4,7 @@ import com.jobpilot.common.ApiResponse;
 import com.jobpilot.interview.InterviewService;
 import com.jobpilot.security.UserContext;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotEmpty;
 import org.springframework.http.HttpStatus;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -21,7 +22,8 @@ import java.util.List;
  * AI 模拟面试（BRD US-3）。
  * <p>
  * <b>请求体一律不含 {@code userId}</b>：身份只从 JWT 解析、经 {@code UserContext} 传递。
- * 会话按公司档位起步，逐轮作答；走完三轮弧线或主动 finish 后出报告，弱点候选走既有审批接口。
+ * 会话从**平台目录选中的公司**起步（可多家，混合成一套题），逐轮作答；走完三轮弧线或主动
+ * finish 后出报告，弱点候选走既有审批接口。
  */
 @RestController
 @RequestMapping("/api/v1/interview")
@@ -35,11 +37,11 @@ public class InterviewController {
     }
 
     public record StartRequest(
-            @NotBlank String company,
+            /** 目标公司（平台目录 ID，可多家）；多家 = 混合成一套题，难度取其中最高档 */
+            @NotEmpty(message = "至少选择一家公司") List<String> companyIds,
+            /** 目标岗位（平台岗位名）；可选 */
             String position,
-            /** 公司档位（jobpilot.interview.tiers 的键）；缺省用默认档位 */
-            String tier,
-            /** 覆盖难度（EASY/MEDIUM/HARD）；缺省用档位预设 */
+            /** 覆盖难度（EASY/MEDIUM/HARD）；缺省用综合档位预设 */
             String difficultyOverride
     ) {
     }
@@ -69,8 +71,8 @@ public class InterviewController {
     @ResponseStatus(HttpStatus.CREATED)
     public ApiResponse<TurnResponse> start(@RequestBody @Validated StartRequest request) {
         return ApiResponse.ok(TurnResponse.from(interviewService.start(new InterviewService.StartCommand(
-                UserContext.require(), request.company(), request.position(),
-                request.tier(), request.difficultyOverride()))));
+                UserContext.require(), request.companyIds(), request.position(),
+                request.difficultyOverride()))));
     }
 
     /** 提交一条回答，返回下一题（或 {@code finished=true}，此时去取报告） */

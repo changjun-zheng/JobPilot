@@ -59,7 +59,7 @@ class InterviewTenantIsolationIntegrationTest extends MySqlIntegrationTestBase {
     void anotherTenantCannotTouchInterviewSession() {
         UserContext.set(tenantA);
         String id = interviewService.start(
-                new InterviewService.StartCommand(tenantA, "A 公司", "后端", "BIG_TECH", null)).sessionId();
+                new InterviewService.StartCommand(tenantA, List.of("comp-bytedance"), "后端", null)).sessionId();
 
         UserContext.set(tenantB);
         assertThatThrownBy(() -> interviewService.detail(id)).isInstanceOf(ApiException.class);

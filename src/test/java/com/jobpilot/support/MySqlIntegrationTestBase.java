@@ -96,6 +96,7 @@ public abstract class MySqlIntegrationTestBase {
             statement.execute("DROP TABLE IF EXISTS platform_position");
             statement.execute("DROP TABLE IF EXISTS platform_company");
             statement.execute("DROP TABLE IF EXISTS interview_message");
+            statement.execute("DROP TABLE IF EXISTS interview_session_company");
             statement.execute("DROP TABLE IF EXISTS interview_session");
             statement.execute("DROP TABLE IF EXISTS usage_record");
             statement.execute("DROP TABLE IF EXISTS conversation_message");
