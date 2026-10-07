@@ -35,7 +35,7 @@ bash scripts/check-arch.sh                # 架构约束检查（改动 ai/ 或 
 
 ## 关键不变量（改代码时别破）
 
-1. **租户隔离**：业务表读写必须带租户归属，由 `TenantLineInnerInterceptor` 强制注入；**写入侧必须显式 `setUserId`**（拦截器对已带 `user_id` 的插入是跳过、不覆盖）。新增业务表必须带 `user_id`，**不加进 `TENANT_EXEMPT_TABLES`**。功能可延期，隔离不能妥协。
+1. **租户隔离**：业务表读写必须带租户归属，由 `TenantLineInnerInterceptor` 强制注入；**写入侧必须显式 `setUserId`**（拦截器对已带 `user_id` 的插入是跳过、不覆盖）。新增业务表必须带 `user_id`，**不加进 `TENANT_EXEMPT_TABLES`**（**唯一例外是平台内容表** `platform_*`：它们本就无租户、所有用户可读——见 [`agents-reference` §2](./docs/agents-reference.md) 的「平台内容库」）。功能可延期，隔离不能妥协。
 2. **端口/适配器边界**：Spring AI 与供应商 HTTP/SDK 类型**只能在 `ai.adapter`**；业务层只依赖 `ChatPort` / `EmbeddingPort` / `VectorStorePort` + JobPilot 自定义 record。
 3. **降级是硬约束**：向量路径不可达必须降级到关键词检索，且标记 `degraded` **一路透传到响应**；无证据直接拒答、不调 LLM。
 4. **HITL**：会写入长期记忆或知识库的工具必须走 HITL（落草稿 + 幂等审批），模型不得有绕过审批的备用工具。审批三条规矩（校验全部前置 / 幂等返回持久化事实 / 空与未知选择拒绝）见 reference §3.5。

@@ -5,7 +5,7 @@
 | 最后更新 | 2026-10-07 |
 | 当前迭代 | **I-4 进行中：前端四页（登录/对话/知识库/账号）已可用；另落地面试模拟官（US-3）与云端 AI 双路径（不再依赖 Ollama）** |
 | 已完成 | I-0、I-1、I-2、I-3 |
-| 最近验证 | 257 个测试通过（含面试满弧线、全量重建隔离、云端适配器）；`check-arch.sh` 全部通过；前端 `pnpm build` 通过 |
+| 最近验证 | 264 个测试通过（含面试满弧线、全量重建隔离、云端适配器、**平台库并入检索的跨租户隔离证明**）；`check-arch.sh` 全部通过；前端 `pnpm build` 通过 |
 
 > **本文件是「进度状态」的唯一事实来源。**
 > BRD / PRD / ARCHITECTURE 只回答「要做什么」和「为什么这么做」，**不记录做到哪一步**。
@@ -300,6 +300,19 @@ I-3 实际是四块互不依赖的工作，一次做完会产出低质量代码�
 **验证证据**：`InterviewStateMachineTest` 5 例（三轮弧线由服务端保证）、`InterviewServiceTest` 6 例（检索传 INTERVIEW / 草稿复用 `memory_candidate_create` / 未知档位与难度拒绝）、`InterviewFlowIntegrationTest` 1 例（真实 MySQL：走完 7 轮 → 报告 → 部分审批 → `user_memory` 行数 == 勾选数、草稿 `PARTIALLY_APPROVED`）、`InterviewTenantIsolationIntegrationTest` 1 例（跨租户读/答/收尾/列表全挡住）。全量 **250 通过**；`check-arch.sh` 六条全过；前端 `pnpm build` 过。
 
 > **踩坑**：`PROJECT_DEEP_DIVE` 17 字符 > `phase VARCHAR(16)` → `Data too long`。V10 是新建、仅被本地库应用过，遂改列宽 + **重置本地 Flyway 应用记录重跑**（不搞「刚建就 ALTER」的 V11）。
+
+### 7.3 平台内容库最小切片（③）· 2026-10-07
+
+**背景**：产品方向转向「用户端 + 管理端」、平台统一维护公司/面经（见 [`docs/平台内容库与双端设计.md`](./平台内容库与双端设计.md)，草案 v3）。整个方向里**唯一有真实技术风险的**是「把全局数据并进按租户的检索、又不破隔离」——本切片先证伪/证实这一块，**不动双端**。
+
+- [x] **平台公司目录**（`platform_company` / `platform_position` / `platform_company_position`，V11）—— 全局、**无 `user_id`**，`TENANT_EXEMPT_TABLES` 的**第二种用途**；只读 API `GET /api/v1/companies?position=&q=`（+ `/positions`）
+- [x] **`owner` 列**（`kb_document` / `kb_chunk`）—— `USER` / `PLATFORM`；平台行 `user_id=NULL`；DB `CHECK (owner='PLATFORM' OR user_id IS NOT NULL)` 把「用户行必有租户」升级为**数据库保证**
+- [x] **检索合并** —— 向量 `$or[user_id=<t>, owner='PLATFORM']`（`search(..., includePlatform)`，**fail-closed 不放松**）+ 回捞与关键词降级各**另读平台行**（`@InterceptorIgnore` + 硬写 `owner='PLATFORM'`）
+- [x] **隔离证明** —— `PlatformRetrievalIsolationIntegrationTest`：向量层**故意把他人向量也返回**，A 仍只见「自己 + 平台」
+
+**验证证据**：`PlatformRetrievalIsolationIntegrationTest` 3 例（隔离 + 平台可见）、`PlatformCatalogIntegrationTest` 4 例（按岗位反查公司）、`KnowledgeRetrievalServiceTest` 13 例；全量 **264 通过**；`check-arch.sh` 六条全过。
+
+**明确不做**（属后续）：管理端与双端认证、面试「按岗位选公司」的集成、BYOK 接缝、平台文档的写入口与前端、平台内容上下架/审计、用量口径区分。
 
 ---
 

@@ -64,6 +64,12 @@ RAG 闭环需要同时具备：MySQL（Flyway 建表）、Ollama（`bge-m3` 嵌�
   - 难度 = 公司档位预设（`jobpilot.interview.tiers`）+ 可覆盖；**创建时快照**（改配置不改写历史会话）
   - 弱点走 **`memory_candidate_create`** 审批写记忆（复用批量/部分审批，`ApprovalExecutionService` **零改动**）；用 `sessionId` 顶替 traceId/conversationId 让草稿幂等键按会话稳定
   - **面经用 `doc_type=INTERVIEW`** 显式标记（无法从扩展名判断），面试官按此类型专门检索
+- `GET /api/v1/companies?position=&q=` 平台公司目录（**全局，所有用户可读**）；`GET /api/v1/companies/positions` 岗位列表（**平台内容库最小切片**）
+  - **这是系统第一处「不归任何租户」的业务数据**。`platform_*` 三表**无 `user_id`**，因此进了 `TENANT_EXEMPT_TABLES`——那是豁免表的**第二种用途**（拦截器不检查表结构，会盲加 `user_id = ?`，表没这列就报 `Unknown column`），与「认证表天然跨租户」不是一回事
+  - 平台**文档**（面经）走 `kb_document.owner='PLATFORM'` + `user_id=NULL`；DB 用 `CHECK (owner='PLATFORM' OR user_id IS NOT NULL)` 把「用户行必有租户」升级为**数据库保证**
+  - **检索合并**：向量 `where = $or[user_id=<t>, owner='PLATFORM']`（`VectorStorePort.search(..., includePlatform=true)`，**fail-closed 不放松**——另一支是「平台」不是「任意」）；回捞与关键词降级各**另读平台行**（`@InterceptorIgnore` + 硬写 `owner='PLATFORM'`，**只读平台行、永不返回任何租户的行**，改这几条 SQL 要重过该论证）
+  - **隔离证明**：`PlatformRetrievalIsolationIntegrationTest`——播种 A/B/平台，向量层故意把 B 的也返回，断言 A 只拿到**自己 + 平台**、绝不拿到 B；用户**没有自己的文档**时平台内容**仍可见**
+  - **写入口属管理端**（未实现）；本切片只有只读 + V11 的种子数据
 
 所有响应（含失败）都带 `requestId`：`RequestIdFilter` 生成、写入 MDC 与 `X-Request-Id` 响应头，用户报障时凭它对齐服务端日志。
 

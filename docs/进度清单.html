@@ -247,6 +247,21 @@
     </ul>
   </section>
 
+  <!-- 平台内容库切片 -->
+  <section>
+    <div class="sec-head">
+      <h2>平台内容库 · 最小切片（③）</h2>
+      <span class="badge done">✅ 已完成</span>
+    </div>
+    <div class="exit">出口：全局数据并入按租户的检索，且跨租户不泄漏</div>
+    <ul class="list">
+      <li class="ok"><b>平台公司目录</b>（V11）：<span style="font-family:var(--mono)">platform_*</span> 三表，<b>无 user_id</b>、所有用户可读；只读 API <span style="font-family:var(--mono)">GET /api/v1/companies?position=&amp;q=</span></li>
+      <li class="ok"><b>owner 列</b>（<span style="font-family:var(--mono)">kb_document</span>/<span style="font-family:var(--mono)">kb_chunk</span>）：<span style="font-family:var(--mono)">USER</span>/<span style="font-family:var(--mono)">PLATFORM</span>；平台行 user_id=NULL；DB <span style="font-family:var(--mono)">CHECK</span> 约束保证「用户行必有租户」</li>
+      <li class="ok"><b>检索合并</b>：向量 <span style="font-family:var(--mono)">$or[user_id, owner=PLATFORM]</span>（fail-closed 不放松）+ 回捞 / 降级各另读平台行</li>
+      <li class="ok"><b>隔离证明</b>：向量层故意返回他人向量，A 仍只见「自己 + 平台」</li>
+    </ul>
+  </section>
+
   <!-- I-5 -->
   <section class="pending-card">
     <div class="sec-head">
@@ -291,8 +306,8 @@
   </section>
 
   <footer>
-    <b>验证证据（2026-10-07）</b>：后端全量 <code>mvn test</code> <b>257 通过 / 0 失败</b>（含面试满弧线、全量重建的跨租户隔离、云端适配器与重排序）；<code>check-arch.sh</code> 六条全过；前端 <code>pnpm build</code> 通过。<br>
-    尚未提交（工作区改动，待审阅后入库）：面试模拟官（BRD US-3）；<b>云端 AI 双路径 + 重排序 + 全量重建（不再依赖 Ollama）</b>；I-4 前端四页。最近提交：<code>43f2e09</code> docs: slim AGENTS.md into a companion reference and record I-4
+    <b>验证证据（2026-10-07）</b>：后端全量 <code>mvn test</code> <b>264 通过 / 0 失败</b>（含面试满弧线、全量重建隔离、云端适配器、<b>平台库并入检索的跨租户隔离证明</b>）；<code>check-arch.sh</code> 六条全过；前端 <code>pnpm build</code> 通过。<br>
+    尚未提交（工作区改动，待审阅后入库）：平台内容库最小切片（③）。最近提交：<code>528de8f</code> docs: record the interview feature and cloud switch, add the platform-content design draft
   </footer>
 
   <div class="meta">生成于 2026-10-06 · 内容同步自 docs/ROADMAP.md（进度唯一事实来源），本页仅为展示视图</div>
