@@ -55,13 +55,15 @@ RAG 闭环需要同时具备：MySQL（Flyway 建表）、Ollama（`bge-m3` 嵌�
 - `GET /api/v1/usage/summary?from=&to=` —— 用量汇总（**I-3c 可归集**）。三维度（EMBEDDING / LLM_TOKEN / AGENT_RUN）零填充 + 场景细分 + `tokenUnavailable`，存储维度对 `kb_document` 现查。**配额与限流不在本接口**，属 I-5。
 - `GET /api/v1/conversations`（`?limit=`）、`GET /{id}`（详情含按序消息）、`DELETE /{id}` —— 会话（**I-4**）。**没有 POST**：会话在首轮 `/agent/run` 时由服务端新建。只落 **USER / ASSISTANT** 两种消息；助手行带 `steps`（工具步骤摘要）与 `traceId`（可回放 `agent_trace`）。工具调用细节存 `agent_trace_step`，本表不重复；**不含 TOOL 行、不做结构化引用**。
   - **`ERROR` 终态的 run 不写助手消息** → 该会话可能出现两条连续 USER 消息（用户重试），是有意的：罐头错误话不该当作助手的真实回答落库。
-- `POST /api/v1/interview/sessions`（`{company, position?, tier?, difficultyOverride?}`）→ 开一场**模拟面试**（**BRD US-3**），返回 `{sessionId, phase, round, totalRounds, status, question}`
+- `POST /api/v1/interview/sessions`（`{companyIds[], position?, difficultyOverride?}`）→ 开一场**模拟面试**（**BRD US-3**），返回 `{sessionId, phase, round, totalRounds, status, question}`
+  - **目标公司来自平台目录**（`companyIds`，可多家），不接自由文本：**多家 = 混合成一套题**（不逐家分轮）。难度取选中公司档位中**难度最高**者，可 `difficultyOverride` 覆盖；含无效/已下架公司的请求 400
+  - 会话上另存**展示快照**：`interview_session.company` = 公司名顿号连接；「关联了哪几家」在 `interview_session_company`（V12，带 `user_id` 的租户表）
 - `POST /api/v1/interview/sessions/{id}/answers`（`{answer}`）→ 下一题，或 `finished=true`（此时去取报告）
 - `POST /api/v1/interview/sessions/{id}/finish` → 提前收尾：出评估报告 + 落弱点草稿
 - `GET /api/v1/interview/sessions/{id}/report` → `{report, draftId, candidateIds, status}`；未收尾 404
 - `GET /api/v1/interview/sessions/{id}` 详情（状态 + 全部消息）　·　`GET /api/v1/interview/sessions` 列表
   - **面试不经过 `AgentRunner`**：走 `interview/InterviewService` 直接调 `ChatPort`——runner 的硬编码 `SYSTEM_PROMPT`（第 1 条强制先调 `knowledge_search`）与「单轮预算 + HITL 短路」都跟三轮面试冲突；**阶段推进由服务端 `InterviewStateMachine` 裁决**，模型只负责措辞
-  - 难度 = 公司档位预设（`jobpilot.interview.tiers`）+ 可覆盖；**创建时快照**（改配置不改写历史会话）
+  - 难度 = 公司综合档位预设（`jobpilot.interview.tiers`）+ 可覆盖；**创建时快照**（改配置不改写历史会话）
   - 弱点走 **`memory_candidate_create`** 审批写记忆（复用批量/部分审批，`ApprovalExecutionService` **零改动**）；用 `sessionId` 顶替 traceId/conversationId 让草稿幂等键按会话稳定
   - **面经用 `doc_type=INTERVIEW`** 显式标记（无法从扩展名判断），面试官按此类型专门检索
 - `GET /api/v1/companies?position=&q=` 平台公司目录（**全局，所有用户可读**）；`GET /api/v1/companies/positions` 岗位列表（**平台内容库最小切片**）

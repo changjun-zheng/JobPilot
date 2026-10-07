@@ -262,6 +262,21 @@
     </ul>
   </section>
 
+  <!-- 面试多家混合 -->
+  <section>
+    <div class="sec-head">
+      <h2>面试 · 多家公司混合成一套题</h2>
+      <span class="badge done">✅ 已完成</span>
+    </div>
+    <div class="exit">出口：从平台目录勾选 1..N 家公司起一场面试，多家混成一套题 + 一份报告</div>
+    <ul class="list">
+      <li class="ok"><b>会话×公司关联表</b>（V12 <span style="font-family:var(--mono)">interview_session_company</span>）—— 带 <span style="font-family:var(--mono)">user_id</span>（租户表）；每行快照公司名 / 档位，改名或下架后历史面试仍可读</li>
+      <li class="ok"><b>目标公司改从平台目录选</b>：<span style="font-family:var(--mono)">StartCommand</span> 的 <span style="font-family:var(--mono)">companyIds</span>（多家）；自建公司名顿号连接仍作展示快照存 <span style="font-family:var(--mono)">interview_session.company</span></li>
+      <li class="ok"><b>难度取综合</b>：多家档位取<b>难度最高</b>者（<span style="font-family:var(--mono)">Difficulty.rank()</span>），可覆盖；含已下架公司的请求拒绝（400）</li>
+      <li class="ok"><b>前端</b>：岗位下拉 → 公司多选 → 难度；去掉手输公司与手选档位</li>
+    </ul>
+  </section>
+
   <!-- I-5 -->
   <section class="pending-card">
     <div class="sec-head">
@@ -306,8 +321,8 @@
   </section>
 
   <footer>
-    <b>验证证据（2026-10-07）</b>：后端全量 <code>mvn test</code> <b>264 通过 / 0 失败</b>（含面试满弧线、全量重建隔离、云端适配器、<b>平台库并入检索的跨租户隔离证明</b>）；<code>check-arch.sh</code> 六条全过；前端 <code>pnpm build</code> 通过。<br>
-    尚未提交（工作区改动，待审阅后入库）：平台内容库最小切片（③）。最近提交：<code>528de8f</code> docs: record the interview feature and cloud switch, add the platform-content design draft
+    <b>验证证据（2026-10-07）</b>：后端全量 <code>mvn test</code> <b>268 通过 / 0 失败</b>（含面试满弧线、<b>多家公司混合关联</b>、全量重建隔离、云端适配器、<b>平台库并入检索的跨租户隔离证明</b>）；<code>check-arch.sh</code> 六条全过；前端 <code>pnpm build</code> 通过。<br>
+    尚未提交（工作区改动，待审阅后入库）：面试「多家公司混合成一套题」。最近提交：<code>e41ecd6</code> docs: record the platform-corpus slice and that the design's step 3 landed
   </footer>
 
   <div class="meta">生成于 2026-10-06 · 内容同步自 docs/ROADMAP.md（进度唯一事实来源），本页仅为展示视图</div>
