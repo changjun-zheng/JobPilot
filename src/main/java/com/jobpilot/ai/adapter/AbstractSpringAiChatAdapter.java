@@ -5,9 +5,9 @@ import com.jobpilot.ai.ChatCompletion;
 import com.jobpilot.ai.ChatPort;
 import com.jobpilot.ai.ChatRequest;
 import com.jobpilot.ai.FinishReason;
+import com.jobpilot.ai.TokenUsage;
 import com.jobpilot.ai.ToolCall;
 import com.jobpilot.ai.ToolDefinition;
-import com.jobpilot.ai.TokenUsage;
 import org.springframework.ai.chat.metadata.ChatResponseMetadata;
 import org.springframework.ai.chat.metadata.EmptyUsage;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -16,56 +16,85 @@ import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.chat.prompt.Prompt;
-import org.springframework.ai.ollama.api.OllamaChatOptions;
 import org.springframework.ai.tool.ToolCallback;
-import org.springframework.stereotype.Component;
 import org.springframework.ai.tool.definition.DefaultToolDefinition;
 
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Spring AI ChatModel 适配器（非流式）。
- * 业务层只依赖 ChatPort；Spring AI 负责 Ollama 协议与响应模型转换，Agent 控制流由 JobPilot 自己实现。
+ * Spring AI {@code ChatModel} 适配器的公共骨架（本地 Ollama 与云端 OpenAI 兼容共用）。
  *
  * <h3>为什么只映射工具「定义」，不执行工具</h3>
- * Spring AI 自带 {@code ToolCallingManager} 与 {@code ToolCallingAdvisor}，可以直接替我们跑完整个
+ * Spring AI 自带 {@code ToolCallingManager} / {@code ToolCallingAdvisor}，可以直接替我们跑完整个
  * ReAct 循环。本项目<b>刻意不用</b>：那会把工具执行关进适配器内部，而工具执行必须发生在
- * {@code AgentRunner} 里——租户上下文注入、预算计数、trace 记录、HITL 短路全都在那儿。
- * 一旦交给 Spring 的 manager，这些控制权就跟着没了。
- * <p>
- * 所以这里的 {@code ToolCallback} 只提供定义（name / description / inputSchema），
- * 它的 {@link ToolCallback#call(String)} 永不执行：裸 {@code ChatModel.call} 不带 advisor 时
- * Spring AI 不会自动调工具。工具请求由模型返回给 {@code AgentRunner}，由 runner 分发。
+ * {@code AgentRunner} 里——租户上下文注入、预算计数、trace、HITL 短路全都在那儿。
+ * 所以这里的 {@code ToolCallback} 只提供定义，{@link ToolCallback#call(String)} 永不执行。
+ *
+ * <h3>子类只差两点</h3>
+ * providers 的 options 类型不兼容（{@code OllamaChatOptions} vs {@code OpenAiChatOptions}），
+ * 所以 {@link #toSpringOptions} 由子类实现；{@link #providerId} 决定写进 {@code ChatCompletion.provider} 的值。
+ * 其余（消息映射、工具调用回读、usage 提取、模型回落）全在这里，改一处即可。
  */
-@Component
-public class OllamaChatAdapter implements ChatPort {
+abstract class AbstractSpringAiChatAdapter implements ChatPort {
 
-    private final ChatModel chatModel;
+    protected final ChatModel chatModel;
 
-    public OllamaChatAdapter(ChatModel chatModel) {
+    protected AbstractSpringAiChatAdapter(ChatModel chatModel) {
         this.chatModel = chatModel;
     }
 
+    /** provider id（写进 ChatCompletion.provider，供计量与排查）：ollama / openai */
+    protected abstract String providerId();
+
+    /** 该 provider 的 options 构造（类型不兼容，各自实现） */
+    protected abstract ChatOptions toSpringOptions(ChatRequest request);
+
+    /** 「模型未配置」错误里提示该配哪个属性 */
+    protected abstract String modelPropertyHint();
+
     @Override
     public ChatCompletion chat(ChatRequest request) {
-        var response = chatModel.call(new Prompt(toSpringMessages(request.messages()), toSpringOptions(request)));
+        ChatResponse response = chatModel.call(
+                new Prompt(toSpringMessages(request.messages()), toSpringOptions(request)));
         AssistantMessage output = response == null || response.getResult() == null
                 ? null : response.getResult().getOutput();
         if (output == null) {
-            throw new IllegalStateException("Ollama 未返回回答");
+            throw new IllegalStateException(providerId() + " 未返回回答");
         }
         String content = output.getText() == null ? "" : output.getText().trim();
         List<ToolCall> toolCalls = toJobPilotToolCalls(output);
         // 模型只请求工具时没有正文，这是正常的；两者皆空才是异常（沿用 I-0 的判定）
         if (content.isEmpty() && toolCalls.isEmpty()) {
-            throw new IllegalStateException("Ollama 未返回有效回答");
+            throw new IllegalStateException(providerId() + " 未返回有效回答");
         }
         return new ChatCompletion(content, toolCalls,
                 toolCalls.isEmpty() ? FinishReason.STOP : FinishReason.TOOL_CALLS,
-                toTokenUsage(response), "ollama", modelName());
+                toTokenUsage(response), providerId(), resolveModelName());
+    }
+
+    /**
+     * Spring AI 侧配置的默认模型名。
+     * <p>取不到时返回 {@code null} 而非编一个默认值：报「未配置模型」比报「模型 x 不存在」更好定位。
+     */
+    protected String resolveModelName() {
+        ChatOptions defaults = chatModel.getDefaultOptions();
+        return defaults == null ? null : defaults.getModel();
+    }
+
+    /** 本轮用哪个模型：请求优先 → Spring AI 默认 → 都没有则早失败并说清该配什么 */
+    protected String resolveModel(ChatRequest request) {
+        String model = request.model() != null && !request.model().isBlank()
+                ? request.model()
+                : resolveModelName();
+        if (model == null || model.isBlank()) {
+            throw new IllegalStateException(
+                    "未指定模型：请在请求的 model 中给出，或配置 " + modelPropertyHint());
+        }
+        return model;
     }
 
     /**
@@ -73,10 +102,9 @@ public class OllamaChatAdapter implements ChatPort {
      * <p>
      * <b>坑：供应商未返回用量时，Spring AI 给的不是 null 而是 {@link EmptyUsage} 占位（0/0）。</b>
      * 不识别它就会把「没数据」记成「零消耗」——把不可用伪装成零，正是计量口径禁止的估算。
-     * 只有占位符映射为 NULL；供应商真实上报的数值（哪怕真的是 0）原样透传。
      */
-    private TokenUsage toTokenUsage(org.springframework.ai.chat.model.ChatResponse response) {
-        var metadata = response.getMetadata();
+    private TokenUsage toTokenUsage(ChatResponse response) {
+        ChatResponseMetadata metadata = response.getMetadata();
         if (metadata == null || metadata.getUsage() == null
                 || metadata.getUsage() instanceof EmptyUsage) {
             return null;
@@ -87,17 +115,6 @@ public class OllamaChatAdapter implements ChatPort {
             return null;
         }
         return new TokenUsage(input, output);
-    }
-
-    /**
-     * Spring AI 侧配置的默认模型名。
-     * <p>
-     * 取不到时返回 {@code null} 而非编一个默认值：模型名猜错会让 Ollama 报 404，
-     * 报「未配置模型」比报「模型 x 不存在」更容易定位。
-     */
-    private String modelName() {
-        ChatOptions defaults = chatModel.getDefaultOptions();
-        return defaults == null ? null : defaults.getModel();
     }
 
     private List<ToolCall> toJobPilotToolCalls(AssistantMessage output) {
@@ -133,42 +150,7 @@ public class OllamaChatAdapter implements ChatPort {
         return result;
     }
 
-    /**
-     * 组装 Spring AI 的调用选项。
-     *
-     * <p><b>必须用 {@code OllamaChatOptions} 而不是 {@code ToolCallingChatOptions.builder()}</b>：
-     * 后者产出 {@code DefaultToolCallingChatOptions}，而 Ollama 的 chat model 内部会把
-     * options 强转成 {@code OllamaChatOptions}，直接 {@code ClassCastException}。
-     * {@code OllamaChatOptions} 本身就实现了 {@code ToolCallingChatOptions}，
-     * 所以工具回调、模型名这些设置方式完全一致。
-     *
-     * <p><b>model 必须显式给，不能指望自动回落。</b>不设 model 时它会被当作 null 一路传到
-     * Ollama，对方报 {@code model cannot be null or empty}——它<b>不会</b>去用
-     * {@code ChatModel.getDefaultOptions()} 里的模型。
-     */
-    private ChatOptions toSpringOptions(ChatRequest request) {
-        String model = request.model() != null && !request.model().isBlank()
-                ? request.model()
-                : modelName();
-        if (model == null || model.isBlank()) {
-            // 请求没指定、Spring AI 侧也没配默认模型：早失败并说清楚该配什么，
-            // 而不是让 null 一路传到 Ollama 变成一句莫名其妙的 "model cannot be null or empty"
-            throw new IllegalStateException(
-                    "未指定模型：请在请求的 model 中给出，或配置 spring.ai.ollama.chat.options.model");
-        }
-        OllamaChatOptions.Builder builder = OllamaChatOptions.builder()
-                .toolCallbacks(request.tools().stream().map(OllamaChatAdapter::toToolCallback).toList())
-                .model(model);
-        if (request.temperature() != null) {
-            builder.temperature(request.temperature());
-        }
-        if (request.maxTokens() != null) {
-            builder.maxTokens(request.maxTokens());
-        }
-        return builder.build();
-    }
-
-    private static ToolCallback toToolCallback(ToolDefinition definition) {
+    protected static ToolCallback toToolCallback(ToolDefinition definition) {
         return new DefinitionOnlyToolCallback(definition);
     }
 

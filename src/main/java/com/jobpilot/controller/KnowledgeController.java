@@ -125,6 +125,19 @@ public class KnowledgeController {
         return ApiResponse.ok(DocumentResponse.from(ingestService.reindex(id)));
     }
 
+    /**
+     * 全量重建索引（**切换 embedding 模型后必须执行**）：把本租户 READY / FAILED 文档重置为 PENDING，
+     * 交同一个 worker 用当前模型重新嵌入。原文已在库，无需重新上传。
+     */
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    @PostMapping("/documents/reindex-all")
+    public ApiResponse<ReindexAllResponse> reindexAll() {
+        return ApiResponse.ok(new ReindexAllResponse(ingestService.reindexAll()));
+    }
+
+    public record ReindexAllResponse(int resetCount) {
+    }
+
     /** 文档列表（PRD-FP-6 知识库页）：status 可选，按导入时间倒序 */
     @GetMapping("/documents")
     public ApiResponse<List<DocumentResponse>> documents(

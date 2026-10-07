@@ -2,10 +2,12 @@ package com.jobpilot.knowledge;
 
 import com.jobpilot.ai.ChatPort;
 import com.jobpilot.ai.EmbeddingPort;
+import com.jobpilot.ai.RerankPort;
 import com.jobpilot.ai.RetrievalResult;
 import com.jobpilot.ai.RetrievedChunk;
 import com.jobpilot.ai.VectorStorePort;
 import com.jobpilot.config.RagProperties;
+import com.jobpilot.config.RerankProperties;
 import com.jobpilot.mapper.KbChunkMapper;
 import com.jobpilot.mapper.KbDocumentMapper;
 import com.jobpilot.usage.UsageRecorder;
@@ -35,6 +37,8 @@ class KnowledgeRetrievalServiceTest {
     private VectorStorePort vectorStore;
     private ChatPort chatPort;
     private UsageRecorder usageRecorder;
+    private RerankPort rerankPort;
+    private RerankProperties rerankProps;
     private KnowledgeRetrievalService retrievalService;
     private RagAskService askService;
 
@@ -46,11 +50,15 @@ class KnowledgeRetrievalServiceTest {
         vectorStore = mock(VectorStorePort.class);
         chatPort = mock(ChatPort.class);
         usageRecorder = mock(UsageRecorder.class);
+        rerankPort = mock(RerankPort.class);
+        rerankProps = mock(RerankProperties.class);
+        when(rerankProps.enabled()).thenReturn(false); // 默认不启用重排：保持既有向量序行为
         RagProperties props = new RagProperties(
                 "http://localhost:11434", "bge-m3", "qwen2.5:3b",
                 "http://localhost:8000", "jobpilot_chunks", null, 500, 100, 5, 0.45,2);
         retrievalService = new KnowledgeRetrievalService(
-                chunkMapper, documentMapper, embeddingPort, vectorStore, props, usageRecorder);
+                chunkMapper, documentMapper, embeddingPort, vectorStore, props, usageRecorder,
+                rerankPort, rerankProps);
         askService = new RagAskService(retrievalService, chatPort, usageRecorder);
     }
 
@@ -71,6 +79,50 @@ class KnowledgeRetrievalServiceTest {
         // FP-10：嵌入成功即计一行，字符数按码点计
         verify(usageRecorder).recordEmbedding(eq("u1"), eq(UsageScenario.SEARCH), eq("bge-m3"),
                 eq("会用 RAG 吗".codePointCount(0, "会用 RAG 吗".length())), eq(1), eq(true), isNull());
+    }
+
+    @Test
+    void rerankReordersCandidatesWhenEnabled() {
+        when(rerankProps.enabled()).thenReturn(true);
+        when(embeddingPort.embed(any())).thenReturn(List.of(0.1));
+        when(vectorStore.search(any(), anyInt(), anyMap())).thenReturn(List.of(
+                new VectorStorePort.VectorMatch("A#0#1", 0.9),
+                new VectorStorePort.VectorMatch("B#0#1", 0.8)));
+        when(chunkMapper.selectByIds(any()))
+                .thenReturn(List.of(chunk("A#0#1", "低相关"), chunk("B#0#1", "高相关")));
+        when(documentMapper.selectList(any())).thenReturn(List.of(readyDoc()));
+        // 重排把 B（下标 1）提到最前
+        when(rerankPort.rerank(any(), any(), anyInt())).thenReturn(List.of(
+                new com.jobpilot.ai.RerankPort.RerankHit(1, 0.99),
+                new com.jobpilot.ai.RerankPort.RerankHit(0, 0.10)));
+
+        RetrievalResult result = retrievalService.search(
+                new com.jobpilot.ai.RetrievalQuery("u1", "问题", 5, null), UsageScenario.SEARCH);
+
+        assertThat(result.items()).extracting(RetrievedChunk::chunkId).containsExactly("B#0#1", "A#0#1");
+        assertThat(result.items().get(0).score()).isEqualTo(0.99);
+        assertThat(result.degraded()).isFalse();
+    }
+
+    @Test
+    void rerankFailureFallsBackToVectorOrderWithoutDegraded() {
+        when(rerankProps.enabled()).thenReturn(true);
+        when(embeddingPort.embed(any())).thenReturn(List.of(0.1));
+        when(vectorStore.search(any(), anyInt(), anyMap())).thenReturn(List.of(
+                new VectorStorePort.VectorMatch("A#0#1", 0.9),
+                new VectorStorePort.VectorMatch("B#0#1", 0.8)));
+        when(chunkMapper.selectByIds(any())).thenReturn(List.of(chunk("A#0#1"), chunk("B#0#1")));
+        when(documentMapper.selectList(any())).thenReturn(List.of(readyDoc()));
+        when(rerankPort.rerank(any(), any(), anyInt())).thenThrow(new RuntimeException("rerank 挂了"));
+
+        RetrievalResult result = retrievalService.search(
+                new com.jobpilot.ai.RetrievalQuery("u1", "问题", 5, null), UsageScenario.SEARCH);
+
+        // 保持向量分数顺序（A 0.9 在前），且**不标记 degraded**——那是向量→关键词降级专用的
+        assertThat(result.items()).extracting(RetrievedChunk::chunkId).containsExactly("A#0#1", "B#0#1");
+        assertThat(result.items().get(0).score()).isEqualTo(0.9);
+        assertThat(result.degraded()).isFalse();
+        assertThat(result.searchMode()).isEqualTo(com.jobpilot.ai.SearchMode.VECTOR);
     }
 
     @Test

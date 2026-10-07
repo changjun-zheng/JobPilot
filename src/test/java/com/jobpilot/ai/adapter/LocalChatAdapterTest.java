@@ -24,12 +24,12 @@ import static org.mockito.Mockito.when;
 
 /**
  * 适配器侧的用量提取（FP-10）：Spring AI 的 Usage 元数据 → 端口 record。
- * 提取逻辑只能在适配器里（Spring AI 类型不越界），所以这里的测试是计量链路的源头闸门。
+ * 提取逻辑在共享基类里（Spring AI 类型不越界），经本地路径适配器验证即可，云端路径逻辑相同。
  */
-class OllamaChatAdapterTest {
+class LocalChatAdapterTest {
 
     private ChatModel chatModel;
-    private OllamaChatAdapter adapter;
+    private LocalChatAdapter adapter;
 
     @BeforeEach
     void setUp() {
@@ -37,7 +37,7 @@ class OllamaChatAdapterTest {
         // toSpringOptions 需要「配置了默认模型」的 ChatModel，否则在提取 usage 之前就会抛「未指定模型」
         when(chatModel.getDefaultOptions())
                 .thenReturn(ChatOptions.builder().model("qwen2.5:3b").build());
-        adapter = new OllamaChatAdapter(chatModel);
+        adapter = new LocalChatAdapter(chatModel);
     }
 
     @Test
@@ -51,6 +51,7 @@ class OllamaChatAdapterTest {
 
         assertThat(completion.usage()).isEqualTo(new TokenUsage(11, 7));
         assertThat(completion.model()).isEqualTo("qwen2.5:3b");
+        assertThat(completion.provider()).isEqualTo("ollama");
     }
 
     @Test

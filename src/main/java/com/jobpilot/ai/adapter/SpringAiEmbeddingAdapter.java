@@ -9,15 +9,18 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Spring AI EmbeddingModel 适配器。
- * 业务层只依赖 EmbeddingPort；Spring AI 负责 Ollama embedding 协议和 float[] 响应转换。
+ * Spring AI {@code EmbeddingModel} 适配器（本地 Ollama 与云端 OpenAI 兼容共用）。
+ * <p>
+ * 与 Chat 不同，Embedding 的调用**没有 provider 专属的 options**，所以不拆两套：哪个 provider 的
+ * {@code EmbeddingModel} bean 生效由 {@code spring.ai.model.embedding} 决定（见 application.yml），
+ * 本适配器只把它转成 {@link EmbeddingPort}。
  */
 @Component
-public class OllamaEmbeddingAdapter implements EmbeddingPort {
+public class SpringAiEmbeddingAdapter implements EmbeddingPort {
 
     private final EmbeddingModel embeddingModel;
 
-    public OllamaEmbeddingAdapter(EmbeddingModel embeddingModel) {
+    public SpringAiEmbeddingAdapter(EmbeddingModel embeddingModel) {
         this.embeddingModel = embeddingModel;
     }
 
@@ -26,7 +29,7 @@ public class OllamaEmbeddingAdapter implements EmbeddingPort {
         EmbeddingResponse response = embeddingModel.embedForResponse(List.of(text));
         if (response == null || response.getResult() == null
                 || response.getResult().getOutput() == null) {
-            throw new IllegalStateException("Ollama 未返回 embedding");
+            throw new IllegalStateException("嵌入服务未返回向量");
         }
         float[] values = response.getResult().getOutput();
         List<Double> result = new ArrayList<>(values.length);

@@ -3,6 +3,7 @@ package com.jobpilot.knowledge;
 import com.jobpilot.ai.CollectionNotFoundException;
 import com.jobpilot.ai.EmbeddingPort;
 import com.jobpilot.ai.VectorStorePort;
+import com.jobpilot.config.RagProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
@@ -32,10 +33,12 @@ public class ChromaStartupCheck implements ApplicationRunner {
 
     private final VectorStorePort vectorStore;
     private final EmbeddingPort embeddingPort;
+    private final String configuredEmbeddingModel;
 
-    public ChromaStartupCheck(VectorStorePort vectorStore, EmbeddingPort embeddingPort) {
+    public ChromaStartupCheck(VectorStorePort vectorStore, EmbeddingPort embeddingPort, RagProperties props) {
         this.vectorStore = vectorStore;
         this.embeddingPort = embeddingPort;
+        this.configuredEmbeddingModel = props.embeddingModel();
     }
 
     @Override
@@ -65,6 +68,33 @@ public class ChromaStartupCheck implements ApplicationRunner {
         log.info("Chroma 集合自检通过：{}（id={}）", info.name(), info.id());
 
         checkDimension(info);
+        checkEmbeddingModel(info);
+    }
+
+    /**
+     * 嵌入模型一致性：集合 metadata 里记着建集合时用的 {@code embedding_model}，与当前配置不一致
+     * 说明「换了嵌入模型但没重建索引」——**维度相同时维度检查漏得掉**（如 bge-m3 → bge-large-zh 都是 1024），
+     * 但两套向量语义不兼容、混在一起会让检索静默变差。属永久性错误，阻断启动并提示重建。
+     * <p>老集合没有这个 metadata（无法验证）→ 只告警，不阻断。
+     */
+    private void checkEmbeddingModel(VectorStorePort.CollectionInfo info) {
+        Object marker = info.metadata() == null ? null : info.metadata().get("embedding_model");
+        if (marker == null) {
+            log.warn("集合 {} 未记录 embedding_model，无法校验嵌入模型是否与配置一致——"
+                    + "若刚换过嵌入模型，请执行 POST /api/v1/knowledge/documents/reindex-all 重建索引。",
+                    info.name());
+            return;
+        }
+        String recorded = String.valueOf(marker);
+        if (configuredEmbeddingModel != null && !configuredEmbeddingModel.equals(recorded)) {
+            throw new IllegalStateException(String.format(
+                    "嵌入模型不一致：集合里是 %s，当前配置是 %s。不同模型的向量语义不兼容，"
+                            + "即使维度相同也会让检索静默劣化。处理方式："
+                            + "POST /api/v1/knowledge/documents/reindex-all 用当前模型重建索引"
+                            + "（或换一个 chroma-collection-id 指向新集合）。",
+                    recorded, configuredEmbeddingModel));
+        }
+        log.info("嵌入模型校验通过：{}", recorded);
     }
 
     /** 维度不一致 = 换过 embedding 模型但没重建索引，属于永久性错误，同样阻断启动 */

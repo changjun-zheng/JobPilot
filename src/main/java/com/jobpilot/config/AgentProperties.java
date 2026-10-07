@@ -12,9 +12,10 @@ import java.time.Duration;
  * <p>
  * 预算与超时对应 ARCHITECTURE.md §6 的 runner 规则。
  *
- * @param providerPath local / cloud。**只允许出现在 Bean 装配处**（@ConditionalOnProperty），
- *                     业务代码不得读取——那是「业务层不得判断当前是哪条路径」这条约束的落点。
- *                     本期只有 local 实现，该键声明但不消费。
+ * @param providerPath provider id：{@code ollama}（本地，默认）/ {@code openai}（云端）。
+ *                     **只允许出现在 Bean 装配处**（{@code @ConditionalOnProperty}），业务代码不得读取——
+ *                     那是「业务层不得判断当前是哪条路径」这条约束的落点。同一个环境变量还驱动
+ *                     {@code spring.ai.model.chat/embedding}，由 {@code AiProviderConsistencyCheck} 启动时断言一致。
  */
 @ConfigurationProperties(prefix = "jobpilot.agent")
 public record AgentProperties(

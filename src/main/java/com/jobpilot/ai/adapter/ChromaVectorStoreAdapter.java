@@ -28,6 +28,7 @@ public class ChromaVectorStoreAdapter implements VectorStorePort {
     private final RestClient restClient;
     private final String collectionName;
     private final String configuredCollectionId;
+    private final String embeddingModel;
     private volatile String collectionId;  // 懒加载缓存
 
     public ChromaVectorStoreAdapter(RagProperties props, ClientHttpRequestFactory requestFactory) {
@@ -37,6 +38,7 @@ public class ChromaVectorStoreAdapter implements VectorStorePort {
                 .build();
         this.collectionName = props.chromaCollection();
         this.configuredCollectionId = props.chromaCollectionId();
+        this.embeddingModel = props.embeddingModel();
     }
 
     @Override
@@ -119,7 +121,7 @@ public class ChromaVectorStoreAdapter implements VectorStorePort {
         return Optional.of(list.stream()
                 .filter(c -> c.id() != null && c.id().equalsIgnoreCase(configuredCollectionId))
                 .findFirst()
-                .map(c -> new CollectionInfo(c.id(), c.name(), c.dimension()))
+                .map(c -> new CollectionInfo(c.id(), c.name(), c.dimension(), c.metadata()))
                 .orElseThrow(() -> new CollectionNotFoundException(
                         "配置的集合 UUID 不存在：" + configuredCollectionId
                                 + "；当前实际存在的集合："
@@ -160,9 +162,16 @@ public class ChromaVectorStoreAdapter implements VectorStorePort {
                 collectionId = configuredCollectionId;
                 return collectionId;
             }
+            // 建集合时把 embedding_model 写进集合 metadata：启动自检据此发现「换了嵌入模型但没重建索引」——
+            // 维度相同（如 bge-m3 → bge-large-zh 都是 1024）时维度检查漏得掉，模型名不会。
+            Map<String, Object> collectionMetadata = new java.util.LinkedHashMap<>();
+            collectionMetadata.put("hnsw:space", "cosine");
+            if (embeddingModel != null && !embeddingModel.isBlank()) {
+                collectionMetadata.put("embedding_model", embeddingModel);
+            }
             Map<String, Object> createBody = Map.of(
                     "name", collectionName,
-                    "metadata", Map.of("hnsw:space", "cosine"));
+                    "metadata", collectionMetadata);
             // 409 = 集合已存在；0.6.x 按名查询路由有缺陷，此时要求配置 chroma-collection-id
             CollectionDto created = restClient.post()
                     .uri("/api/v1/collections")
@@ -183,7 +192,7 @@ public class ChromaVectorStoreAdapter implements VectorStorePort {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    record CollectionDto(String id, String name, Integer dimension) {
+    record CollectionDto(String id, String name, Integer dimension, Map<String, Object> metadata) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

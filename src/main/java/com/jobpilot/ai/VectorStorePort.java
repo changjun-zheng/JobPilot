@@ -40,7 +40,7 @@ public interface VectorStorePort {
     record VectorMatch(String id, double score) {
     }
 
-    /** 集合展示信息，供启动自检与维度校验使用 */
-    record CollectionInfo(String id, String name, Integer dimension) {
+    /** 集合展示信息，供启动自检使用。{@code metadata} 里带 {@code embedding_model}（若创建时写入） */
+    record CollectionInfo(String id, String name, Integer dimension, Map<String, Object> metadata) {
     }
 }

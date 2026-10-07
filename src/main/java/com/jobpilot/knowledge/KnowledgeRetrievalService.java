@@ -3,12 +3,14 @@ package com.jobpilot.knowledge;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.jobpilot.ai.Citation;
 import com.jobpilot.ai.EmbeddingPort;
+import com.jobpilot.ai.RerankPort;
 import com.jobpilot.ai.RetrievalQuery;
 import com.jobpilot.ai.RetrievalResult;
 import com.jobpilot.ai.RetrievedChunk;
 import com.jobpilot.ai.VectorStorePort;
 import com.jobpilot.common.UnauthorizedException;
 import com.jobpilot.config.RagProperties;
+import com.jobpilot.config.RerankProperties;
 import com.jobpilot.domain.KbChunkEntity;
 import com.jobpilot.domain.KbDocumentEntity;
 import com.jobpilot.mapper.KbChunkMapper;
@@ -51,19 +53,25 @@ public class KnowledgeRetrievalService {
     private final VectorStorePort vectorStore;
     private final RagProperties props;
     private final UsageRecorder usageRecorder;
+    private final RerankPort rerankPort;
+    private final RerankProperties rerankProps;
 
     public KnowledgeRetrievalService(KbChunkMapper chunkMapper,
                                      KbDocumentMapper documentMapper,
                                      EmbeddingPort embeddingPort,
                                      VectorStorePort vectorStore,
                                      RagProperties props,
-                                     UsageRecorder usageRecorder) {
+                                     UsageRecorder usageRecorder,
+                                     RerankPort rerankPort,
+                                     RerankProperties rerankProps) {
         this.chunkMapper = chunkMapper;
         this.documentMapper = documentMapper;
         this.embeddingPort = embeddingPort;
         this.vectorStore = vectorStore;
         this.props = props;
         this.usageRecorder = usageRecorder;
+        this.rerankPort = rerankPort;
+        this.rerankProps = rerankProps;
     }
 
     /**
@@ -121,12 +129,49 @@ public class KnowledgeRetrievalService {
         }
 
         Map<String, KbChunkEntity> chunks = loadReadyChunks(scoreById.keySet());
-        List<RetrievedChunk> items = scoreById.entrySet().stream()
-                .filter(e -> chunks.containsKey(e.getKey()))
-                .limit(topK) // 候选池放大过，最终仍按用户要的条数截断
-                .map(e -> toRetrieved(chunks.get(e.getKey()), e.getValue()))
+        List<String> candidateIds = scoreById.keySet().stream().filter(chunks::containsKey).toList();
+        return RetrievalResult.vector(rank(query.text(), candidateIds, chunks, scoreById, topK));
+    }
+
+    /**
+     * 对候选排序并截到 topK：启用时用 cross-encoder 重排，否则/失败时用向量分数顺序。
+     * <p>
+     * <b>降级语义（别搞混）</b>：重排是可选增强——失败只告警并**保持向量分数顺序**，
+     * **不设 {@code degraded}**。那个标记专指「向量→关键词」的降级，混用会让「降级必须可见」这条不变量失真。
+     */
+    private List<RetrievedChunk> rank(String queryText, List<String> ids,
+                                      Map<String, KbChunkEntity> chunks,
+                                      Map<String, Double> vectorScores, int topK) {
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+        List<RerankPort.RerankHit> order;
+        if (rerankProps.enabled()) {
+            try {
+                List<String> texts = ids.stream().map(id -> chunks.get(id).getText()).toList();
+                List<RerankPort.RerankHit> hits = rerankPort.rerank(queryText, texts, topK);
+                // 空结果当作不可用处理：不该因重排返回空就把候选全丢掉
+                order = hits.isEmpty() ? vectorOrder(ids, vectorScores) : hits;
+            } catch (Exception e) {
+                log.warn("重排序失败，回退为向量分数排序", e);
+                order = vectorOrder(ids, vectorScores);
+            }
+        } else {
+            order = vectorOrder(ids, vectorScores);
+        }
+        return order.stream()
+                .limit(topK)
+                .map(hit -> toRetrieved(chunks.get(ids.get(hit.index())), hit.score()))
                 .toList();
-        return RetrievalResult.vector(items);
+    }
+
+    /** 向量分数顺序（重排未启用或失败时的回退） */
+    private List<RerankPort.RerankHit> vectorOrder(List<String> ids, Map<String, Double> vectorScores) {
+        List<RerankPort.RerankHit> hits = new ArrayList<>(ids.size());
+        for (int i = 0; i < ids.size(); i++) {
+            hits.add(new RerankPort.RerankHit(i, vectorScores.get(ids.get(i))));
+        }
+        return hits;
     }
 
     /** 降级路径：提取关键词 → MySQL LIKE OR 查询（暴力版，够 M-1 演示降级语义） */

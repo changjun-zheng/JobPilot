@@ -127,6 +127,15 @@
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-starter-model-ollama</artifactId>
         </dependency>
+        <!--
+          云端 provider（I-2 双路径落地的云端一侧）：OpenAI 兼容协议，嵌入走 SiliconFlow、
+          对话走智谱。/ 通过 spring.ai.model.chat|embedding 选择启用哪一个 provider 的自动配置
+          （见 application.yml + AiProviderConsistencyCheck），因此两个 starter 同时在场也不会 Bean 歧义。
+        -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-model-openai</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-webmvc-test</artifactId>
