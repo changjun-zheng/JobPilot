@@ -133,6 +133,44 @@ class PlatformRetrievalIsolationIntegrationTest extends MySqlIntegrationTestBase
         assertThat(result.items()).extracting(RetrievedChunk::chunkId).containsExactly(chunkP);
     }
 
+    /**
+     * 公司范围把**平台内容**硬收窄到选定公司：别的公司的平台面经、以及不带 company_id 的通用平台文档都进不来；
+     * 而**用户自己的文档不受限**（那是他的简历/材料）。
+     */
+    @Test
+    void companyScopeNarrowsPlatformContentButKeepsOwnDocuments() {
+        String docX = UUID.randomUUID().toString();
+        String docY = UUID.randomUUID().toString();
+        String docGen = UUID.randomUUID().toString();
+        String chunkX = docX + "#0#1";
+        String chunkY = docY + "#0#1";
+        String chunkGen = docGen + "#0#1";
+        seedDocument(docX, null, "X 面经", "PLATFORM", "shared-keyword", "comp-x");
+        seedDocument(docY, null, "Y 面经", "PLATFORM", "shared-keyword", "comp-y");
+        seedDocument(docGen, null, "通用考点", "PLATFORM", "shared-keyword", null); // 不带 company_id
+        seedChunk(chunkX, docX, null, "PLATFORM", "shared-keyword");
+        seedChunk(chunkY, docY, null, "PLATFORM", "shared-keyword");
+        seedChunk(chunkGen, docGen, null, "PLATFORM", "shared-keyword");
+
+        // 最坏情况：向量层把 A 自己的 + 三个平台文档全带回来
+        mockVectorHits(chunkA, chunkX, chunkY, chunkGen);
+
+        UserContext.set(tenantA);
+        RetrievalResult result = retrievalService.search(
+                new RetrievalQuery(tenantA, "shared-keyword", 10, null, List.of("comp-x")),
+                UsageScenario.SEARCH);
+
+        assertThat(result.items()).extracting(RetrievedChunk::chunkId)
+                .contains(chunkA, chunkX)      // 自己的材料 + 选中公司的面经
+                .doesNotContain(chunkY, chunkGen); // 别的公司 / 通用平台文档——被收窄挡掉
+
+        // 空范围 = 不限公司：平台内容（含通用）都可进来
+        RetrievalResult unscoped = retrievalService.search(
+                new RetrievalQuery(tenantA, "shared-keyword", 10, null), UsageScenario.SEARCH);
+        assertThat(unscoped.items()).extracting(RetrievedChunk::chunkId)
+                .contains(chunkX, chunkY, chunkGen);
+    }
+
     private void mockVectorHits(String... vectorIds) {
         when(vectorStore.search(any(), anyInt(), anyMap(), anyBoolean()))
                 .thenReturn(java.util.Arrays.stream(vectorIds)
@@ -141,10 +179,14 @@ class PlatformRetrievalIsolationIntegrationTest extends MySqlIntegrationTestBase
     }
 
     private void seedDocument(String id, String userId, String name, String owner, String content) {
+        seedDocument(id, userId, name, owner, content, null);
+    }
+
+    private void seedDocument(String id, String userId, String name, String owner, String content, String companyId) {
         jdbcTemplate.update("INSERT INTO kb_document "
-                        + "(id, user_id, owner, name, doc_type, status, index_version, chunk_count, content) "
-                        + "VALUES (?, ?, ?, ?, 'PLAIN_TEXT', 'READY', 1, 1, ?)",
-                id, userId, owner, name, content);
+                        + "(id, user_id, owner, company_id, name, doc_type, status, index_version, chunk_count, content) "
+                        + "VALUES (?, ?, ?, ?, ?, 'PLAIN_TEXT', 'READY', 1, 1, ?)",
+                id, userId, owner, companyId, name, content);
     }
 
     private void seedChunk(String vectorId, String docId, String userId, String owner, String text) {

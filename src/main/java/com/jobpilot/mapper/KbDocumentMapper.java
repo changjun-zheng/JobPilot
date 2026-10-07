@@ -75,6 +75,9 @@ public interface KbDocumentMapper extends BaseMapper<KbDocumentEntity> {
     /**
      * 给定 id 里**属于平台、且状态为 READY** 的那批文档 id（回捞平台 Chunk 时校验其文档已就绪）。
      * <p>
+     * {@code companyIds} 非空时再按公司收窄（{@code company_id ∈ companyIds}）——面试按选中的公司取面经；
+     * 不带 {@code company_id} 的通用平台文档在收窄时被排除。**只作用于平台行**（本 SQL 本就只读平台行）。
+     * <p>
      * 同上面的纪律：{@code @InterceptorIgnore(tenantLine)} + SQL 里硬写 {@code owner='PLATFORM'}，
      * <b>只读平台行，永不返回任何租户的行</b>——不构成跨租户泄漏面。改动本条 SQL 要重过这个论证。
      */
@@ -84,7 +87,12 @@ public interface KbDocumentMapper extends BaseMapper<KbDocumentEntity> {
             SELECT id FROM kb_document
             WHERE owner = 'PLATFORM' AND status = 'READY' AND id IN
             <foreach item='id' collection='ids' open='(' separator=',' close=')'>#{id}</foreach>
+            <if test="companyIds != null and companyIds.size() > 0">
+              AND company_id IN
+              <foreach item='cid' collection='companyIds' open='(' separator=',' close=')'>#{cid}</foreach>
+            </if>
             </script>
             """)
-    List<String> selectPlatformReadyDocumentIds(@Param("ids") Collection<String> ids);
+    List<String> selectPlatformReadyDocumentIds(@Param("ids") Collection<String> ids,
+                                                @Param("companyIds") Collection<String> companyIds);
 }

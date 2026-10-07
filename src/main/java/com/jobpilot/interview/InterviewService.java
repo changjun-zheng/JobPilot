@@ -306,7 +306,9 @@ public class InterviewService {
                                List<InterviewMessageEntity> history, String candidateAnswer,
                                InterviewPhase phase, InterviewProperties.InterviewTier tierCfg,
                                Difficulty difficulty) {
-        Evidence evidence = retrieveEvidence(userId, session.getCompany(), session.getPosition());
+        // 目标公司（本会话关联的平台公司）——检索面经时按它硬收窄，别的公司的平台内容不进来
+        List<String> companyIds = store.companyIds(session.getId());
+        Evidence evidence = retrieveEvidence(userId, session.getCompany(), session.getPosition(), companyIds);
         List<AgentMessage> messages = new ArrayList<>();
         messages.add(new AgentMessage.System(InterviewPrompts.interviewerSystem(
                 session.getCompany(), session.getPosition(), phase, difficulty,
@@ -364,10 +366,12 @@ public class InterviewService {
     private record Evidence(String block, boolean hasMaterials) {
     }
 
-    private Evidence retrieveEvidence(String userId, String company, String position) {
+    private Evidence retrieveEvidence(String userId, String company, String position, List<String> companyIds) {
         String pos = position == null ? "" : position;
-        List<RetrievedChunk> resume = safeSearch(userId, (pos.isBlank() ? company : pos) + " 项目 经历 技术栈", null);
-        List<RetrievedChunk> mianjing = safeSearch(userId, (company + " " + pos).strip(), INTERVIEW_DOC_TYPE);
+        List<RetrievedChunk> resume = safeSearch(userId, (pos.isBlank() ? company : pos) + " 项目 经历 技术栈",
+                null, companyIds);
+        List<RetrievedChunk> mianjing = safeSearch(userId, (company + " " + pos).strip(),
+                INTERVIEW_DOC_TYPE, companyIds);
 
         if (resume.isEmpty() && mianjing.isEmpty()) {
             return new Evidence(
@@ -397,11 +401,16 @@ public class InterviewService {
         return text.replaceAll("\\s*\\[\\d+\\]\\s*$", "").strip();
     }
 
-    /** 检索失败不能让整场面试崩——降级为「无材料」，返回空 */
-    private List<RetrievedChunk> safeSearch(String userId, String query, String docType) {
+    /**
+     * 检索失败不能让整场面试崩——降级为「无材料」，返回空。
+     * <p>
+     * {@code companyIds} 非空 → 平台内容硬收窄到这些公司（本轮面试的目标公司）。
+     */
+    private List<RetrievedChunk> safeSearch(String userId, String query, String docType, List<String> companyIds) {
         try {
             return retrievalService.search(
-                    new RetrievalQuery(userId, query, EVIDENCE_TOP_K, docType), UsageScenario.AGENT).items();
+                    new RetrievalQuery(userId, query, EVIDENCE_TOP_K, docType, companyIds),
+                    UsageScenario.AGENT).items();
         } catch (Exception e) {
             log.warn("面试证据检索失败（降级为无材料）docType={} query={}", docType, query, e);
             return List.of();

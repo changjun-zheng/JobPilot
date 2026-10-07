@@ -130,7 +130,7 @@ public class KnowledgeRetrievalService {
             return RetrievalResult.vector(List.of());
         }
 
-        Map<String, KbChunkEntity> chunks = loadReadyChunks(scoreById.keySet());
+        Map<String, KbChunkEntity> chunks = loadReadyChunks(scoreById.keySet(), query.companyIds());
         List<String> candidateIds = scoreById.keySet().stream().filter(chunks::containsKey).toList();
         return RetrievalResult.vector(rank(query.text(), candidateIds, chunks, scoreById, topK));
     }
@@ -205,9 +205,10 @@ public class KnowledgeRetrievalService {
             wrapper.orderByAsc("document_id", "seq").last("LIMIT " + candidatePool);
             candidates.addAll(chunkMapper.selectList(wrapper));
         }
-        // 平台内容也并进来（@InterceptorIgnore 方法，只读 owner='PLATFORM'，永不返回租户行）
+        // 平台内容也并进来（@InterceptorIgnore 方法，只读 owner='PLATFORM'，永不返回租户行）；
+        // 公司范围非空时平台文档按 company_id 收窄
         candidates.addAll(chunkMapper.selectPlatformChunksByKeywords(
-                keywords, query.docType(), candidatePool));
+                keywords, query.docType(), query.companyIds(), candidatePool));
 
         return candidates.stream()
                 .map(chunk -> new Scored(chunk, countHits(chunk.getText(), keywords)))
@@ -276,11 +277,14 @@ public class KnowledgeRetrievalService {
      * <b>平台行另读</b>：平台 Chunk 的 {@code user_id} 为 NULL，上面那两条租户查询会静默滤掉它们，
      * 所以用 {@code @InterceptorIgnore} 的平台读方法（只读 {@code owner='PLATFORM'}，永不返回租户行）单独取，
      * 再与本租户结果**按 vectorId 合并**。
+     * <p>
+     * {@code companyIds} 非空时**平台文档**再按公司硬收窄（{@code company_id ∈ companyIds}）——
+     * 面试按「选中的公司」取面经（见 {@code InterviewService}）。**本租户的文档不受此限**（那是用户自己的材料）。
      */
-    private Map<String, KbChunkEntity> loadReadyChunks(Collection<String> vectorIds) {
+    private Map<String, KbChunkEntity> loadReadyChunks(Collection<String> vectorIds, List<String> companyIds) {
         Map<String, KbChunkEntity> merged = new LinkedHashMap<>();
 
-        // 本租户：文档必须 READY
+        // 本租户：文档必须 READY（公司范围不作用于本租户行）
         List<KbChunkEntity> chunks = chunkMapper.selectByIds(vectorIds);
         if (!chunks.isEmpty()) {
             List<String> docIds = chunks.stream().map(KbChunkEntity::getDocumentId).distinct().toList();
@@ -293,13 +297,13 @@ public class KnowledgeRetrievalService {
                     .forEach(c -> merged.put(c.getVectorId(), c));
         }
 
-        // 平台：单独读（租户查询够不着），文档同样要 READY
+        // 平台：单独读（租户查询够不着），文档同样要 READY，并按公司范围收窄
         List<KbChunkEntity> platformChunks = chunkMapper.selectPlatformChunksByIds(vectorIds);
         if (!platformChunks.isEmpty()) {
             List<String> platformDocIds = platformChunks.stream()
                     .map(KbChunkEntity::getDocumentId).distinct().toList();
             Set<String> readyPlatformDocIds = new HashSet<>(
-                    documentMapper.selectPlatformReadyDocumentIds(platformDocIds));
+                    documentMapper.selectPlatformReadyDocumentIds(platformDocIds, companyIds));
             platformChunks.stream()
                     .filter(c -> readyPlatformDocIds.contains(c.getDocumentId()))
                     .forEach(c -> merged.put(c.getVectorId(), c));

@@ -32,13 +32,17 @@ public interface KbChunkMapper extends BaseMapper<KbChunkEntity> {
             """)
     List<KbChunkEntity> selectPlatformChunksByIds(@Param("ids") Collection<String> ids);
 
-    /** 平台 Chunk 的关键词检索（检索降级路径用）；只取 READY 平台文档的 Chunk */
+    /** 平台 Chunk 的关键词检索（检索降级路径用）；只取 READY 平台文档的 Chunk，{@code companyIds} 非空时按公司收窄 */
     @InterceptorIgnore(tenantLine = "true")
     @Select("""
             <script>
             SELECT c.* FROM kb_chunk c JOIN kb_document d ON d.id = c.document_id
             WHERE c.owner = 'PLATFORM' AND d.status = 'READY'
               <if test="docType != null and docType != ''"> AND c.doc_type = #{docType} </if>
+              <if test="companyIds != null and companyIds.size() > 0">
+                AND d.company_id IN
+                <foreach item='cid' collection='companyIds' open='(' separator=',' close=')'>#{cid}</foreach>
+              </if>
               AND (
                 <foreach item='kw' collection='keywords' separator=' OR '>
                   c.text LIKE CONCAT('%', #{kw}, '%')
@@ -50,5 +54,6 @@ public interface KbChunkMapper extends BaseMapper<KbChunkEntity> {
             """)
     List<KbChunkEntity> selectPlatformChunksByKeywords(@Param("keywords") List<String> keywords,
                                                        @Param("docType") String docType,
+                                                       @Param("companyIds") List<String> companyIds,
                                                        @Param("limit") int limit);
 }

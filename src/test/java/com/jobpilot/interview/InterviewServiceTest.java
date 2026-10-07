@@ -172,6 +172,22 @@ class InterviewServiceTest {
                 .containsNull();         // 简历/项目：不加类型过滤
     }
 
+    /** 面试检索带**本会话关联公司的范围**——平台面经按这些公司硬收窄（简历/面经两条查询都带上） */
+    @Test
+    void interviewRetrievalCarriesTheSessionCompanyScope() {
+        when(store.require(SESSION)).thenReturn(session(1, 1, "IN_PROGRESS"));
+        when(store.messages(SESSION)).thenReturn(List.of());
+        when(store.companyIds(SESSION)).thenReturn(List.of("comp-x", "comp-y"));
+        when(chatPort.chat(any())).thenReturn(completion("下一题"));
+
+        service.answer(SESSION, "答");
+
+        ArgumentCaptor<RetrievalQuery> queries = ArgumentCaptor.forClass(RetrievalQuery.class);
+        verify(retrievalService, org.mockito.Mockito.atLeastOnce()).search(queries.capture(), any());
+        assertThat(queries.getAllValues()).isNotEmpty()
+                .allSatisfy(q -> assertThat(q.companyIds()).containsExactly("comp-x", "comp-y"));
+    }
+
     @Test
     void answerInLastRoundFinishesWithAReport() {
         when(store.require(SESSION)).thenReturn(session(3, 2, "IN_PROGRESS"));

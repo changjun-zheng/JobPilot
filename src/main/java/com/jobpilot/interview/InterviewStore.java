@@ -176,6 +176,16 @@ public class InterviewStore {
                 .orderByAsc("seq"));
     }
 
+    /** 会话关联的平台公司 ID（检索按此硬收窄面经）；按公司名升序，与创建时的展示顺序一致 */
+    public List<String> companyIds(String sessionId) {
+        return sessionCompanyMapper.selectList(new QueryWrapper<InterviewSessionCompanyEntity>()
+                        .eq("session_id", sessionId)
+                        .orderByAsc("company_name"))
+                .stream()
+                .map(InterviewSessionCompanyEntity::getCompanyId)
+                .toList();
+    }
+
     /** 当前租户的面试列表，按最近活跃倒序 */
     public List<InterviewSessionEntity> list(int limit) {
         int clamped = limit <= 0 ? DEFAULT_LIST_LIMIT : Math.min(limit, MAX_LIST_LIMIT);
