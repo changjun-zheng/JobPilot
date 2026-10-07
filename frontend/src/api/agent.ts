@@ -31,3 +31,22 @@ export function runAgent(message: string, conversationId?: string): Promise<Agen
     data: { message, conversationId: conversationId ?? null },
   })
 }
+
+export interface ApprovalResult {
+  draftId: string
+  status: string
+  resultRef: string | null
+  writtenMemoryIds: string[]
+}
+
+/**
+ * 审批草稿并执行副作用。
+ * 批量草稿（如记忆候选）可带 selectedCandidateIds 做**部分审批**；不传即整批通过。
+ */
+export function approveDraft(draftId: string, selectedCandidateIds?: string[]): Promise<ApprovalResult> {
+  return request<ApprovalResult>({
+    url: `/agent/approvals/${draftId}/approve`,
+    method: 'post',
+    data: selectedCandidateIds ? { selectedCandidateIds } : {},
+  })
+}

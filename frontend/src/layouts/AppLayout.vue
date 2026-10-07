@@ -10,6 +10,7 @@ const auth = useAuthStore()
 
 const navItems = [
   { index: '/chat', label: '对话' },
+  { index: '/interview', label: '面试模拟' },
   { index: '/knowledge', label: '知识库' },
   { index: '/account', label: '账号' },
 ]
@@ -33,7 +34,10 @@ async function logout() {
 <template>
   <el-container class="layout">
     <el-header class="layout-header">
-      <div class="brand">JobPilot</div>
+      <div class="brand">
+        <img src="/logo-mark.svg" alt="" width="24" height="24" class="brand-mark" />
+        <span class="brand-name"><span class="brand-accent">Job</span>Pilot</span>
+      </div>
       <el-menu :default-active="route.path" mode="horizontal" router :ellipsis="false" class="nav">
         <el-menu-item v-for="item in navItems" :key="item.index" :index="item.index">
           {{ item.label }}
@@ -60,9 +64,21 @@ async function logout() {
   border-bottom: 1px solid #e6e9f0;
 }
 .brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.brand-mark {
+  display: block;
+}
+.brand-name {
   font-weight: 700;
   font-size: 18px;
-  color: #4f46e5;
+  letter-spacing: -0.01em;
+  color: #0f1115;
+}
+.brand-accent {
+  color: #0b5fff;
 }
 .nav {
   flex: 1;

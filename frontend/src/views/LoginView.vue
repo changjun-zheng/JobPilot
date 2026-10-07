@@ -115,7 +115,10 @@ async function submitRegister() {
 <template>
   <div class="login-wrap">
     <el-card class="login-card">
-      <div class="brand">JobPilot</div>
+      <div class="brand">
+        <img src="/logo-mark.svg" alt="" width="40" height="40" class="brand-mark" />
+        <span class="brand-name"><span class="brand-accent">Job</span>Pilot</span>
+      </div>
       <p class="sub">求职 Copilot · 你的知识库与投递助手</p>
 
       <el-tabs v-model="tab" stretch>
@@ -211,10 +214,22 @@ async function submitRegister() {
   width: 440px;
 }
 .brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.brand-mark {
+  display: block;
+}
+.brand-name {
   font-size: 22px;
   font-weight: 700;
-  color: #4f46e5;
-  text-align: center;
+  letter-spacing: -0.01em;
+  color: #0f1115;
+}
+.brand-accent {
+  color: #0b5fff;
 }
 .sub {
   margin: 4px 0 18px;

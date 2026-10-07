@@ -3,7 +3,24 @@ spring:
     name: jobpilot
   profiles:
     default: local
+  # 读取根目录 .env（gitignored，含云端凭据与模型名）；文件不存在时不报错——
+  # CI / 别人 clone 没有 .env 也能起（此时 provider-path 走默认 ollama，不需要任何 key）。
+  config:
+    import: optional:file:.env[.properties]
   ai:
+    # provider 选择：**一处开关驱动三处**（provider-path + 下面两个），避免两个旋钮漂移。
+    # ollama=本地（无需 key）；openai=云端（嵌入 SiliconFlow / 对话智谱）。
+    model:
+      chat: ${JOBPILOT_AGENT_PROVIDER_PATH:ollama}
+      embedding: ${JOBPILOT_AGENT_PROVIDER_PATH:ollama}
+      # 本项目只用 chat + embedding。其余模态在 OpenAI starter 里也会自动配置，
+      # 且**不认** spring.ai.model.chat——无 key 时会因 AudioSpeechModel 等直接启动失败。
+      # 显式设 none 让它们退避（Spring AI 的开关是 havingValue，非该值即不生效）。
+      audio:
+        speech: none
+        transcription: none
+      image: none
+      moderation: none
     ollama:
       # Spring AI 侧的模型配置与 jobpilot.rag.* 是「同一批模型的两种入口」：
       # 业务层读 RagProperties（端口与 Chroma 自检），而注入的 EmbeddingModel / ChatModel
@@ -20,6 +37,20 @@ spring:
       chat:
         options:
           model: ${JOBPILOT_RAG_CHAT_MODEL:qwen2.5:3b}
+    openai:
+      # 云端 provider（OpenAI 兼容）：chat 与 embedding 各自独立的 base-url / api-key / model
+      # （两者都继承 AbstractOpenAiProperties）。智谱 base 是 /api/paas/v4（**没有 /v1**），
+      # Spring AI 会往后拼 /chat/completions、/embeddings。
+      chat:
+        base-url: ${JOBPILOT_OPENAI_CHAT_BASE_URL:https://open.bigmodel.cn/api/paas/v4}
+        api-key: ${JOBPILOT_OPENAI_CHAT_API_KEY:}
+        options:
+          model: ${JOBPILOT_RAG_CHAT_MODEL:glm-4.7-flash}
+      embedding:
+        base-url: ${JOBPILOT_OPENAI_EMBEDDING_BASE_URL:https://api.siliconflow.cn/v1}
+        api-key: ${JOBPILOT_OPENAI_EMBEDDING_API_KEY:}
+        options:
+          model: ${JOBPILOT_RAG_EMBEDDING_MODEL:BAAI/bge-large-zh-v1.5}
   data:
     redis:
       # 撤销黑名单等命令的超时：Redis 不可达时快速失败走 fail-open（TokenBlacklistService），
@@ -56,9 +87,28 @@ jobpilot:
     model: ${JOBPILOT_AGENT_MODEL:}
     temperature: 0.2
     max-tokens: 1024
-    # local / cloud。只允许出现在 Bean 装配处，业务代码不得读取（ARCHITECTURE §5.5）。
-    # 本期只有 local 实现，该键声明但不消费。
-    provider-path: ${JOBPILOT_AGENT_PROVIDER_PATH:local}
+    # provider id：ollama（本地，默认）| openai（云端）。只允许出现在 Bean 装配处，业务代码不得读取
+    # （ARCHITECTURE §5.5）。同一个环境变量还驱动 spring.ai.model.chat/embedding（见文件顶部），
+    # 由 AiProviderConsistencyCheck 在启动时断言三者一致——防两个旋钮被人改歪。
+    provider-path: ${JOBPILOT_AGENT_PROVIDER_PATH:ollama}
+  interview:
+    # 面试模拟官（BRD US-3）：阶段弧线为 基础 → 项目深挖 → 压力，故 questions-per-round 必须正好 3 个
+    questions-per-round: [3, 2, 2]
+    default-tier: ${JOBPILOT_INTERVIEW_DEFAULT_TIER:BIG_TECH}
+    # 公司档位 → 预设难度与追问风格；用户可在创建会话时用 difficultyOverride 覆盖
+    tiers:
+      BIG_TECH:
+        difficulty: HARD
+        followup-style: DEEP
+        pressure: true
+      MID_TECH:
+        difficulty: MEDIUM
+        followup-style: STANDARD
+        pressure: false
+      STARTUP:
+        difficulty: EASY
+        followup-style: PRAGMATIC
+        pressure: false
   ingest:
     # I-1c DB 队列 worker：任务行即消息，无 @Async / 无 MQ
     enabled: true
@@ -100,3 +150,10 @@ jobpilot:
     top-k: 5
     similarity-threshold: 0.45
     keyword-min-hits: 2   # 降级检索：至少命中 N 个不同关键词才算证据；待评测集校准
+  rerank:
+    # 重排序（可选，云端 SiliconFlow /rerank）。enabled=false → 检索直接用向量分数排序。
+    # 失败**不影响**检索：静默回退到向量序，且**不置 degraded**（那个标记专指向量→关键词降级）。
+    enabled: ${JOBPILOT_RERANK_ENABLED:false}
+    base-url: ${JOBPILOT_RERANK_BASE_URL:https://api.siliconflow.cn/v1}
+    api-key: ${JOBPILOT_RERANK_API_KEY:}
+    model: ${JOBPILOT_RERANK_MODEL:BAAI/bge-reranker-v2-m3}

@@ -30,6 +30,7 @@ const STATUS_OPTIONS = [
 const DOC_TYPE_LABEL: Record<string, string> = {
   MARKDOWN: 'Markdown',
   PLAIN_TEXT: '纯文本',
+  INTERVIEW: '面经',
 }
 
 function fmtTime(value: string | null): string {
@@ -209,6 +210,7 @@ async function remove(row: KbDocument) {
             <el-radio value="">按文件名自动判断</el-radio>
             <el-radio value="MARKDOWN">Markdown</el-radio>
             <el-radio value="PLAIN_TEXT">纯文本</el-radio>
+            <el-radio value="INTERVIEW">面经</el-radio>
           </el-radio-group>
         </el-form-item>
         <el-form-item label="标签（可选）">

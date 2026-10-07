@@ -173,6 +173,29 @@ public class DocumentIngestService {
     }
 
     /**
+     * 全量重建索引：把本租户所有 READY / FAILED 文档重置为 PENDING，交同一个 worker 用**当前**嵌入模型重嵌。
+     * <p>
+     * <b>切换 embedding 模型后必须执行</b>——不同模型的向量语义不兼容，即使维度相同也会让检索静默劣化；
+     * 原文在 {@code kb_document.content} 里，重建无需重新上传。
+     * <p>
+     * 不写 {@code user_id}：租户条件由拦截器注入（只影响本租户）。{@code index_version} 不变 →
+     * upsert 覆盖同 vector_id，不产生孤儿。
+     *
+     * @return 受影响（被重置）的文档数
+     */
+    public int reindexAll() {
+        int updated = documentMapper.update(null, new UpdateWrapper<KbDocumentEntity>()
+                .in("status", "READY", "FAILED")
+                .set("status", "PENDING")
+                .set("retry_count", 0)
+                .set("chunk_count", 0)
+                .set("next_retry_at", null)
+                .set("error_message", null));
+        log.info("全量重建索引：{} 篇文档重置为 PENDING", updated);
+        return updated;
+    }
+
+    /**
      * 执行一次已认领任务的索引尝试。失败不抛出——任务的去向（READY / PENDING 重排队 / FAILED）
      * 全部落到行上，worker 循环不因单个任务中断。
      */
@@ -316,6 +339,16 @@ public class DocumentIngestService {
         chunkMapper.insert(chunk);
     }
 
+    /**
+     * 支持的类型白名单。
+     * <p>
+     * {@code INTERVIEW}（面经，I-4 面试模拟官）是**显式**类型——无法从扩展名判断，
+     * 由导入方在 {@code docType} 里指定；它让面试官能按 {@code doc_type} 专门检索面经
+     * （切分仍按 Markdown/纯文本自适应，与类型正交）。
+     */
+    private static final java.util.Set<String> SUPPORTED_DOC_TYPES =
+            java.util.Set.of("MARKDOWN", "PLAIN_TEXT", "INTERVIEW");
+
     private void validate(IngestCommand command) {
         if (command.userId() == null || command.userId().isBlank()) {
             throw new IllegalArgumentException("userId 不能为空");
@@ -323,8 +356,9 @@ public class DocumentIngestService {
         if (command.name() == null || command.name().isBlank()) {
             throw new IllegalArgumentException("文档名称不能为空");
         }
-        if (!"MARKDOWN".equals(command.docType()) && !"PLAIN_TEXT".equals(command.docType())) {
-            throw new IllegalArgumentException("M-1 仅支持 MARKDOWN / PLAIN_TEXT，收到：" + command.docType());
+        if (!SUPPORTED_DOC_TYPES.contains(command.docType())) {
+            throw new IllegalArgumentException(
+                    "不支持的文档类型：" + command.docType() + "，允许值：" + SUPPORTED_DOC_TYPES);
         }
     }
 

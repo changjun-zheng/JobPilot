@@ -274,6 +274,16 @@ class DocumentIngestServiceTest {
         return doc;
     }
 
+    @Test
+    void interviewDocTypeIsAccepted() {
+        // 面经（I-4 面试模拟官）：显式类型，无法从扩展名判断，由导入方指定
+        KbDocumentEntity doc = service.enqueue(new IngestCommand(
+                "u1", "字节面经.md", "INTERVIEW", null, "面经正文"));
+
+        assertThat(doc.getDocType()).isEqualTo("INTERVIEW");
+        assertThat(doc.getStatus()).isEqualTo("PENDING");
+    }
+
     private KbDocumentEntity claimedTask(int retryCount, String content) {
         KbDocumentEntity doc = new KbDocumentEntity();
         doc.setId("doc-test");
