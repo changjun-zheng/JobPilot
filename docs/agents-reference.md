@@ -57,6 +57,7 @@ RAG 闭环需要同时具备：MySQL（Flyway 建表）、Ollama（`bge-m3` 嵌�
   - **`ERROR` 终态的 run 不写助手消息** → 该会话可能出现两条连续 USER 消息（用户重试），是有意的：罐头错误话不该当作助手的真实回答落库。
 - `POST /api/v1/interview/sessions`（`{companyIds[], position?, difficultyOverride?}`）→ 开一场**模拟面试**（**BRD US-3**），返回 `{sessionId, phase, round, totalRounds, status, question}`
   - **目标公司来自平台目录**（`companyIds`，可多家），不接自由文本：**多家 = 混合成一套题**（不逐家分轮）。难度取选中公司档位中**难度最高**者，可 `difficultyOverride` 覆盖；含无效/已下架公司的请求 400
+  - **检索按公司硬收窄**：面试的面经/材料两条查询都带 `RetrievalQuery.companyIds`——**平台内容**只留 `company_id ∈ 范围` 的文档（不带 `company_id` 的通用平台文档被排除），**用户自己的文档不受限**。收窄在回捞（`selectPlatformReadyDocumentIds`）与关键词降级（`selectPlatformChunksByKeywords`）两处落地；向量层仍过取（`company_id` 已写进 Chroma metadata，但嵌套 `$and/$or/$in` 待真机验证）
   - 会话上另存**展示快照**：`interview_session.company` = 公司名顿号连接；「关联了哪几家」在 `interview_session_company`（V12，带 `user_id` 的租户表）
 - `POST /api/v1/interview/sessions/{id}/answers`（`{answer}`）→ 下一题，或 `finished=true`（此时去取报告）
 - `POST /api/v1/interview/sessions/{id}/finish` → 提前收尾：出评估报告 + 落弱点草稿

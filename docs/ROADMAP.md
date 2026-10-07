@@ -5,7 +5,7 @@
 | 最后更新 | 2026-10-07 |
 | 当前迭代 | **I-4 进行中：前端四页（登录/对话/知识库/账号）已可用；另落地面试模拟官（US-3）、云端 AI 双路径（不再依赖 Ollama）、平台内容库最小切片与面试「多家公司混合」** |
 | 已完成 | I-0、I-1、I-2、I-3 |
-| 最近验证 | 268 个测试通过（含面试满弧线、多家公司混合、全量重建隔离、云端适配器、**平台库并入检索的跨租户隔离证明**）；`check-arch.sh` 全部通过；前端 `pnpm build` 通过 |
+| 最近验证 | 270 个测试通过（含面试满弧线、多家公司混合、**检索按公司硬收窄**、全量重建隔离、云端适配器、**平台库并入检索的跨租户隔离证明**）；`check-arch.sh` 全部通过；前端 `pnpm build` 通过 |
 
 > **本文件是「进度状态」的唯一事实来源。**
 > BRD / PRD / ARCHITECTURE 只回答「要做什么」和「为什么这么做」，**不记录做到哪一步**。
@@ -321,12 +321,12 @@ I-3 实际是四块互不依赖的工作，一次做完会产出低质量代码�
 - [x] **会话×公司关联表**（`interview_session_company`，V12）—— 带 `user_id`（租户表，**不进** `TENANT_EXEMPT_TABLES`）；每行快照 `company_name` / `tier`，公司改名/下架后历史面试仍可读
 - [x] **`StartCommand` 改「平台目录公司 ID 列表」**：`company` 自由文本 → `companyIds`（`@NotEmpty`）；自建的公司名顿号连接仍作**展示快照**存在 `interview_session.company`
 - [x] **难度取综合**：多家公司的档位取其中**难度最高**者（`Difficulty.rank()`），用户仍可 `difficultyOverride` 覆盖；未知档位/难度/含已下架公司的请求一律拒绝（400）
-- [x] **检索带全部公司名**：`retrieveEvidence` 的 query 文本用顿号连接的公司名（`字节跳动、小米`），面经仍走 `doc_type=INTERVIEW` + 平台合并
+- [x] **检索按公司硬收窄**：`RetrievalQuery` 加 `companyIds`（公司范围）；面试的面经/材料两条查询都带上本会话关联公司，**平台内容**只留 `company_id ∈ 范围` 的文档（不带 `company_id` 的通用平台文档被排除），**用户自己的文档不受限**。向量层照旧过取，收窄在**回捞**（`selectPlatformReadyDocumentIds`）与**关键词降级**（`selectPlatformChunksByKeywords`）两处落地——与平台隔离证明同一层
 - [x] **前端 `/interview` 页改造**：岗位下拉（`/companies/positions`）→ 公司多选（`/companies?position=`）→ 难度；去掉手输公司与手选档位
 
-**验证证据**：`InterviewServiceTest` 7 例（多家取最高档、展示快照、无效公司/未知档位/难度拒绝）、`InterviewFlowIntegrationTest` 3 例（**真实 MySQL：两家公司 → 2 条关联行 + 会话快照名含两家 + 档位 BIG_TECH**）、`PlatformCatalogIntegrationTest` 5 例（`activeCompaniesByIds` 只返在架）；全量 **268 通过**；`check-arch.sh` 六条全过；前端 `pnpm build` 过。
+**验证证据**：`InterviewServiceTest` 8 例（多家取最高档、展示快照、**检索带会话公司范围**、无效公司/未知档位/难度拒绝）、`InterviewFlowIntegrationTest` 3 例（**真实 MySQL：两家公司 → 2 条关联行 + 会话快照名含两家 + 档位 BIG_TECH**）、`PlatformCatalogIntegrationTest` 5 例（`activeCompaniesByIds` 只返在架）、`PlatformRetrievalIsolationIntegrationTest` 4 例（**含公司范围收窄：别的公司/通用平台文档进不来、自己的材料不受限**）；全量 **270 通过**；`check-arch.sh` 六条全过；前端 `pnpm build` 过。
 
-**明确不做**（属后续）：把检索**硬收窄**到选中公司的 `company_id`（当前靠 query 文本语义排序；chunk 未带 `company_id`，硬过滤需改 chunk metadata）；管理端维护公司档位/面经；「重面这几家」；BYOK。
+**明确不做**（属后续）：平台内容的**向量层预过滤**（`company_id` 已写进 Chroma metadata，但嵌套 `$and/$or/$in` 需真机 Chroma 验证，暂靠回捞收窄 + 向量过取）；管理端维护公司档位/面经；「重面这几家」；BYOK。
 
 ---
 
