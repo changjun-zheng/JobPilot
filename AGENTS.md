@@ -17,6 +17,7 @@ This file provides guidance to AI coding agents when working with code in this r
 - **进度**：I-0 ~ I-3 已完成；I-4 进行中（会话持久化前置已完成，页面未开始）。以 `ROADMAP.md` 为准。
 - **产品定位：多租户 SaaS**（2026-10-01 起）。**租户 = 一个自然人用户，无权限可分配。**
 - 根目录 `README.md` 仍停留在骨架阶段，与代码不符；实际能力以 `src/main/java` 为准。
+- **管理端（2026-10-08 起）**：`/api/v1/admin/**` 是**第二条认证轴**（独立密钥 + issuer；管理令牌与用户令牌互不认账），**不配置即禁用**（`jobpilot.admin.username` 留空 → 全 401）。管理请求**不写 `UserContext`**（管理员不是租户，误触租户表会 fail-closed）；独立 SPA 在 `frontend-admin/`。
 
 ## 常用命令
 
@@ -73,9 +74,11 @@ bash scripts/check-arch.sh                # 架构约束检查（改动 ai/ 或 
 - 检索 / 导入 / 问答：`knowledge/`（`DocumentIngestService` / `KnowledgeRetrievalService` / `RagAskService` / `ChunkSplitter`）
 - Agent：`agent/`（`AgentRunner` / `AgentChatService` / `AgentToolRegistry` / `ApprovalExecutionService`）
 - 计量 `usage/`　·　记忆 `memory/`　·　投递 `application/`　·　会话 `conversation/`
+- 平台内容 `platform/`（`PlatformCatalogService` 只读 / `PlatformAdminService` 目录写 / `PlatformDocumentService` 面经同步导入）　·　管理端认证 `security/Admin*`
 - 边界 `ai/` + `ai/adapter/`　·　租户 `security/UserContext` + `config/MybatisPlusConfig`
 - 实体/领域 `domain/`　·　mapper `mapper/`　·　迁移 `src/main/resources/db/migration/`
-- 前端 `frontend/`（Vue 3 + Vite + TS + Element Plus 独立 SPA；`pnpm dev` 走 Vite 代理到 `:8080`；见 `frontend/README.md`）
+- 前端 `frontend/`（用户端；Vue 3 + Vite + TS + Element Plus；`pnpm dev` 走 Vite 代理到 `:8080`）
+- 管理端 SPA `frontend-admin/`（独立入口 / 端口 5174 / 独立登录态；见 `frontend-admin/README.md`）
 
 ## 已知边界
 

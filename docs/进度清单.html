@@ -278,6 +278,23 @@
     </ul>
   </section>
 
+  <!-- 管理端 -->
+  <section>
+    <div class="sec-head">
+      <h2>管理端 · 双认证轴 + 平台内容写入口</h2>
+      <span class="badge done">✅ 已完成</span>
+    </div>
+    <div class="exit">出口：平台公司/面经有了写入口，不再靠播种；管理员与用户两把钥匙互不认账</div>
+    <ul class="list">
+      <li class="ok"><b>第二认证轴</b>：<span style="font-family:var(--mono)">/api/v1/admin/**</span> 独立密钥 + issuer（<span style="font-family:var(--mono)">jobpilot-admin</span>）；两类令牌在<b>验签层互不解析</b>（用户令牌打管理面 / 管理令牌打用户面 → 均 401）</li>
+      <li class="ok"><b>不配置即禁用</b>：<span style="font-family:var(--mono)">jobpilot.admin.username</span> 留空 → 全部管理路径 401，应用照常启动；管理请求<b>不写 <span style="font-family:var(--mono)">UserContext</span></b>（误触租户表会被 fail-closed 炸掉）</li>
+      <li class="ok"><b>目录写入口</b>：公司增改 / 上下架、岗位新建、公司×岗位关联；档位在<b>写入端</b>校验（未知档位的公司起面试才会 400——坏数据不给用户发现）</li>
+      <li class="ok"><b>平台面经导入（同步管线）</b>：切分→嵌入→向量→Chunk→READY；<b>不复用租户 DB 队列</b>（平台行 user_id=NULL 会撞 fail-closed）。写面收在 <span style="font-family:var(--mono)">PlatformKbMapper</span>（SQL 硬写 owner='PLATFORM'，INSERT 连 user_id 都硬写 NULL）</li>
+      <li class="ok"><b>合规 + 下架</b>：导入<b>强制填来源/授权备注</b>（V13 加 source_note）；一键下架 = ARCHIVED + 清 Chunk + 尽力清向量（行保留审计）</li>
+      <li class="ok"><b>管理端 SPA</b>：独立 <span style="font-family:var(--mono)">frontend-admin/</span>（端口 5174 / 独立 token key）：登录 · 公司与岗位 · 平台面经三页</li>
+    </ul>
+  </section>
+
   <!-- I-5 -->
   <section class="pending-card">
     <div class="sec-head">
@@ -322,8 +339,8 @@
   </section>
 
   <footer>
-    <b>验证证据（2026-10-07）</b>：后端全量 <code>mvn test</code> <b>270 通过 / 0 失败</b>（含面试满弧线、<b>多家公司混合 + 检索按公司硬收窄</b>、全量重建隔离、云端适配器、<b>平台库并入检索的跨租户隔离证明</b>）；<code>check-arch.sh</code> 六条全过；前端 <code>pnpm build</code> 通过。<br>
-    尚未提交（工作区改动，待审阅后入库）：面试「多家公司混合成一套题」+ 检索按公司硬收窄。最近提交：<code>8e5d4de</code> docs: record the multi-company interview slice
+    <b>验证证据（2026-10-08）</b>：后端全量 <code>mvn test</code> <b>281 通过 / 0 失败</b>（含面试满弧线、多家公司混合 + 检索按公司硬收窄、全量重建隔离、云端适配器、平台库并入检索的跨租户隔离证明、<b>管理端双认证轴与平台写入口</b>）；<code>check-arch.sh</code> 六条全过；用户端与管理端 <code>pnpm build</code> 均通过。<br>
+    尚未提交（工作区改动，待审阅后入库）：管理端（双认证轴 + 平台内容写入口）+ 独立管理端 SPA。最近提交：<code>a45baad</code> docs: record company-scoped interview retrieval
   </footer>
 
   <div class="meta">生成于 2026-10-06 · 内容同步自 docs/ROADMAP.md（进度唯一事实来源），本页仅为展示视图</div>

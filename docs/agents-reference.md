@@ -24,6 +24,8 @@ RAG 闭环需要同时具备：MySQL（Flyway 建表）、Ollama（`bge-m3` 嵌�
 
 **重排序（`jobpilot.rerank.*`，可选）**：SiliconFlow 的 `/rerank`（cross-encoder，`BAAI/bge-reranker-v2-m3`）。`enabled=false`（默认）时检索直接用向量分数排序。**失败不影响检索**——静默回退向量序且**不置 `degraded`**（那个标记专指向量→关键词降级）。
 
+**管理端（`jobpilot.admin.*`，第二认证轴）**：`username` 留空 = **管理面禁用**（所有 `/api/v1/admin/**` 401，应用照常启动）。启用需三项：`username` / `password` / `jwt-secret`（≥32 字节）。`AdminJwtService` 用**独立密钥 + issuer `jobpilot-admin`**，与租户 `JwtService`（issuer `jobpilot`）分属两把钥匙——两类令牌在**验签层互不解析**，用户令牌打管理面或管理令牌打用户面都是 401。管理账号是**配置态单账号**（`.env` 注入，不落库）；密码校验是恒定时间比较（SHA-256 拉平长度）。管理令牌 TTL 更短（默认 `PT30M`）。配置进 `.env`：`JOBPILOT_ADMIN_USERNAME` / `_PASSWORD` / `_JWT_SECRET`。
+
 `jobpilot.agent.*`（`AgentProperties`）是 runner 预算与超时。其中 `agent.model` **留空是有意的**——留空即回落到 `spring.ai.ollama.chat.options.model`，刻意不在配置里第三次写模型名。
 
 **`jobpilot.rag.chroma-collection-id` 必须固定配置**（`application-local.yml` 里的固定 UUID）：Chroma 0.6.x 的 REST 无法可靠地按名获取已有集合，409（集合已存在）时拿不到 id，否则重启后集合 id 变化会导致写不进/查不到。
@@ -72,7 +74,18 @@ RAG 闭环需要同时具备：MySQL（Flyway 建表）、Ollama（`bge-m3` 嵌�
   - 平台**文档**（面经）走 `kb_document.owner='PLATFORM'` + `user_id=NULL`；DB 用 `CHECK (owner='PLATFORM' OR user_id IS NOT NULL)` 把「用户行必有租户」升级为**数据库保证**
   - **检索合并**：向量 `where = $or[user_id=<t>, owner='PLATFORM']`（`VectorStorePort.search(..., includePlatform=true)`，**fail-closed 不放松**——另一支是「平台」不是「任意」）；回捞与关键词降级各**另读平台行**（`@InterceptorIgnore` + 硬写 `owner='PLATFORM'`，**只读平台行、永不返回任何租户的行**，改这几条 SQL 要重过该论证）
   - **隔离证明**：`PlatformRetrievalIsolationIntegrationTest`——播种 A/B/平台，向量层故意把 B 的也返回，断言 A 只拿到**自己 + 平台**、绝不拿到 B；用户**没有自己的文档**时平台内容**仍可见**
-  - **写入口属管理端**（未实现）；本切片只有只读 + V11 的种子数据
+  - **写入口属管理端**：见下方 `/api/v1/admin/platform/**`（已实现）；V11 种子是初始数据，不再是唯一来源
+
+**管理端 API（`/api/v1/admin/**`，第二认证轴，须管理令牌）**
+- `POST /api/v1/admin/auth/login`（`{username,password}`）→ `{accessToken}`。**唯一免管理令牌的路径**（`WebMvcConfig` 的 `excludePathPatterns`）。失败统一 401
+- 公司与岗位：`GET /admin/platform/companies`（**含已下架**）、`POST`（新建）、`PUT /{id}`（部分更新）、`POST /{id}/archive`｜`/activate`；`GET`｜`POST /admin/platform/positions`；`PUT`｜`DELETE /admin/platform/companies/{id}/positions/{positionId}`（关联/解除）
+  - 公司档位在**写入端**用 `InterviewProperties.tier` 校验——否则用户选中它起面试时 `resolveHardestTier` 才 400（坏数据不给用户发现）
+  - **下架不是删除**：目录被历史面试的关联行快照引用，物理删除会断审计链；下架行对用户侧只读查询（恒带 `status='ACTIVE'`）不可见
+- 平台面经：`GET /admin/platform/documents?status=&companyId=`、`POST`（导入）、`POST /{id}/reindex`、`POST /{id}/archive`
+  - **导入强制填 `sourceNote`（来源/授权备注，合规 §8）**；**同步索引**（切分 → 嵌入 → Chroma → Chunk → READY），失败落 `FAILED` + 原因。**不复用租户 DB 队列**——队列把行自带 `user_id` 写回 `UserContext`，平台行是 NULL 必撞 fail-closed
+  - 写面全部收在 `PlatformKbMapper`：每条 SQL 硬写 `owner='PLATFORM'`，INSERT 连 `user_id` 都硬写 NULL——**造不出也改不到租户行**（跨租户写面，改任一条要重过论证）
+  - **下架** = `status→ARCHIVED`（终态）+ 清 Chunk + 尽力清向量；向量清理失败只告警（检索只认 READY，残留不可召回）
+  - 管理请求**不写 `UserContext`**（管理员不是租户）——管理代码误触租户表会被租户拦截器 fail-closed 炸掉
 
 所有响应（含失败）都带 `requestId`：`RequestIdFilter` 生成、写入 MDC 与 `X-Request-Id` 响应头，用户报障时凭它对齐服务端日志。
 
