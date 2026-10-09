@@ -137,6 +137,13 @@ jobpilot:
       1. 注册收集邮箱（作为账号唯一标识）与密码（仅以加盐哈希存储，任何人（包括我们）都无法看到明文）；
       2. 你导入的简历、JD 等材料仅用于向你本人提供检索与问答，不用于训练模型，不向其他用户提供；
       3. 你可以随时导出或删除自己的全部数据，删除后服务端副本一并清除。
+  admin:
+    # 管理端（第二认证轴）：username 留空 = 管理面禁用（所有 /api/v1/admin/** 一律 401），应用照常启动。
+    # 密钥与租户侧（jobpilot.security.jwt-secret）必须不同——两把钥匙让两类令牌在验签层互不解析。
+    username: ${JOBPILOT_ADMIN_USERNAME:}
+    password: ${JOBPILOT_ADMIN_PASSWORD:}
+    jwt-secret: ${JOBPILOT_ADMIN_JWT_SECRET:}
+    access-token-ttl: ${JOBPILOT_ADMIN_ACCESS_TOKEN_TTL:PT30M}
   rag:
     ollama-base-url: ${JOBPILOT_RAG_OLLAMA_URL:http://localhost:11434}
     embedding-model: ${JOBPILOT_RAG_EMBEDDING_MODEL:bge-m3}

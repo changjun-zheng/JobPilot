@@ -22,6 +22,8 @@ public class KbDocumentEntity {
     /** MARKDOWN / PLAIN_TEXT */
     private String docType;
     private String tags;
+    /** 来源/授权备注（合规，设计草案 §8）；平台导入强制填写，租户导入为 NULL */
+    private String sourceNote;
     /** DocumentStatus 名称 */
     private String status;
     private Integer indexVersion;
@@ -93,6 +95,14 @@ public class KbDocumentEntity {
 
     public void setTags(String tags) {
         this.tags = tags;
+    }
+
+    public String getSourceNote() {
+        return sourceNote;
+    }
+
+    public void setSourceNote(String sourceNote) {
+        this.sourceNote = sourceNote;
     }
 
     public String getStatus() {
